@@ -1,0 +1,47 @@
+{
+  "name": "@zhangbo-cn/dsh-client-ui-voice-input",
+  "version": "0.1.0",
+  "description": "Composer voice-input control for DeepSeek Harness: a mic button that transcribes browser Web Speech recognition into the draft.",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./invariant": {
+      "types": "./lib/types/invariant.d.ts",
+      "default": "./lib/invariant.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-runtime"
+      ],
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "bundle": "tsdown"
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-client-locale": ">=0.0.1-rc.1",
+    "@deepseek-ai/dsh-client-runtime": ">=0.0.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-conversation": ">=0.0.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.0.1-rc.1",
+    "@deepseek-ai/dsh-invariants": ">=0.0.1-rc.1",
+    "react": "^18.2.0"
+  }
+}

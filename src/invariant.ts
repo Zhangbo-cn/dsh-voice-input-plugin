@@ -1,0 +1,31 @@
+/**
+ * Package-owned invariant companion for `@zhangbo-cn/dsh-client-ui-voice-input`.
+ * @module @zhangbo-cn/dsh-client-ui-voice-input/invariant
+ */
+
+/* jscpd:ignore-start */
+import type { Context } from '@deepseek-ai/cordis'
+import type { InvariantInstaller } from '@deepseek-ai/dsh-invariants'
+
+const PACKAGE_NAME = '@zhangbo-cn/dsh-client-ui-voice-input'
+
+/** Cordis companion plugin name. */
+export const name = 'ui-voice-input-invariant'
+/** Service required before the companion can reserve package ownership. */
+export const inject = ['invariants']
+
+/**
+ * No runtime invariant: the mic control is a pure client-surface component
+ * whose recognition wiring is pinned by its jsdom component tests; there is no
+ * owned state or observation stream to assert.
+ */
+const install: InvariantInstaller = () => {}
+
+/**
+ * Register this package's invariant companion.
+ * @param ctx - Cordis context carrying the invariant service.
+ * @returns the installed registration's disposer after setup succeeds.
+ */
+export const apply = (ctx: Context): Promise<() => void> =>
+  Promise.resolve(ctx.invariants.register(PACKAGE_NAME, install))
+/* jscpd:ignore-end */
