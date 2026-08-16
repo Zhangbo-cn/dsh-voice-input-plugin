@@ -75,13 +75,16 @@ MicButton (conversation.input.left)
 
 ## Compatibility
 
-| Browser | Mic (input) | Voice chat (TTS voice) |
-|---------|-------------|------------------------|
+| Browser | Mic (input, SpeechRecognition) | Reply playback (speechSynthesis) |
+|---------|--------------------------------|----------------------------------|
 | Chrome / Edge (Windows) | ✅ Web Speech | ✅ natural (Google / Edge neural) voices |
-| Safari | ✅ Web Speech | ✅ natural voices |
-| Firefox | ⚠️ no Web Speech input | n/a |
+| Safari | ✅ webkitSpeechRecognition (re-trigger on each gesture) | ✅ natural OS voices |
+| Firefox | ⚠️ **not supported — browser limitation** (Mozilla has not shipped `SpeechRecognition`; local on-device recognition is still early-stage) | ⚠️ `speechSynthesis` **is supported** (reply can be read aloud), but voices are OS-default / less natural |
 
-Requires a microphone and (for voice chat's reply playback) a browser with `speechSynthesis`.
+Notes:
+- **Firefox mic input**: this is a genuine browser limitation, not a plugin issue. The plugin feature-detects and disables the mic with a "not supported in this browser" hint. A cross-browser fallback would need `MediaRecorder` + an external transcription service (out of scope for a zero-backend plugin).
+- **Reply playback**: `speechSynthesis` works in Firefox; only the voice quality differs (it falls back to the OS default voice rather than a natural neural voice).
+- Requires a microphone and a browser with `speechSynthesis` for reply playback.
 
 ## Tests
 
