@@ -27,9 +27,43 @@ const HOLD_THRESHOLD = 250
 const DEEPSEEK_BLUE = '#4d6bfe'
 
 /** Extract the assistant's visible text blocks from the streaming partial reply. */
-export function extractPartialText(partial: { blocks: readonly { kind: string; text?: string }[] } | null): string {
-  if (partial === null) return ''
+export function extractPartialText(partial: { blocks: readonly { kind: string; text?: string }[] } | null | undefined): string {
+  if (partial === null || partial === undefined) return ''
   return partial.blocks.filter((block) => block.kind === 'text').map((block) => block.text ?? '').join('')
+}
+
+/** Sentence-end delimiters used to cut streamed text into speakable segments. */
+const SENTENCE_END = /[。！？!?…\n]$/
+/** Flush a buffered (delimiter-less) sentence once it gets this long, so long sentences still stream. */
+const STREAM_FLUSH_CHARS = 30
+
+/**
+ * Split streamed reply text into speakable segments: completed sentences plus
+ * delimiter-less runs past {@link STREAM_FLUSH_CHARS}. Each segment carries its
+ * end offset in `text` so the caller can track how much has been handed to TTS
+ * (the trailing incomplete sentence stays un-spoken and is re-evaluated later).
+ */
+export function splitStreamSegments(text: string): { segment: string; end: number }[] {
+  const result: { segment: string; end: number }[] = []
+  const parts = text.match(/[^。！？!?…\n]+[。！？!?…\n]*/g) ?? []
+  let end = 0
+  for (const part of parts) {
+    end += part.length
+    const trimmed = part.trim()
+    if (trimmed.length === 0) continue
+    if (SENTENCE_END.test(trimmed) || trimmed.length >= STREAM_FLUSH_CHARS) {
+      result.push({ segment: trimmed, end })
+    }
+  }
+  return result
+}
+
+/** Length of the longest common prefix of two strings. */
+export function commonPrefixLength(left: string, right: string): number {
+  const max = Math.min(left.length, right.length)
+  let i = 0
+  while (i < max && left.charCodeAt(i) === right.charCodeAt(i)) i++
+  return i
 }
 
 /**
@@ -71,8 +105,20 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
     }
   }
 
+  /** The streaming reply partial, subscribed so reply reading starts while the model is still generating. */
+  const partial = useSession((state) => state.partial)
   /** Whether reading paused a live recognizer (so stopping reading must resume it). */
   const readingPausedRef = useRef(false)
+  /** Reply segments queued for sequential reading. */
+  const ttsQueueRef = useRef<string[]>([])
+  /** Whether a segment is currently being read (serializes the queue). */
+  const ttsSpeakingRef = useRef(false)
+  /** The streamed text already handed to TTS; trailing incomplete sentences are intentionally excluded. */
+  const ttsSpokenPrefixRef = useRef('')
+  /** Whether the reply has finalized (so a drained queue means reading is done). */
+  const ttsFinalizedRef = useRef(false)
+  /** A stop-tap on the mic consumes its pointer-up (no toggle/monitoring side effects). */
+  const stopTapRef = useRef(false)
 
   /** End reply reading (naturally or by user stop): clear state and resume monitoring if paused. */
   const finishReading = (): void => {
@@ -83,26 +129,68 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
     }
   }
 
+  /** Speak queued segments one at a time; once the queue drains after the reply finalizes, finish. */
+  const pumpQueue = (): void => {
+    const sp = speakerRef.current
+    if (sp === null || ttsSpeakingRef.current) return
+    const segment = ttsQueueRef.current.shift()
+    if (segment === undefined) {
+      if (ttsFinalizedRef.current) finishReading()
+      return
+    }
+    ttsSpeakingRef.current = true
+    sp.onend = () => { ttsSpeakingRef.current = false; pumpQueue() }
+    console.info(`[dsh-voice] reading reply aloud: ${segment.slice(0, 40)}${segment.length > 40 ? '…' : ''}`)
+    sp.speak(segment)
+  }
+
+  /** Queue reply segments for reading; pause recognition on the first so the reply is not echoed. */
+  const enqueueReplySegments = (segments: string[]): void => {
+    for (const segment of segments) {
+      if (segment.trim().length > 0) ttsQueueRef.current.push(segment)
+    }
+    if (ttsQueueRef.current.length === 0) return
+    if (!readingPausedRef.current) {
+      const wasMonitoring = monitoringRef.current
+      if (wasMonitoring) pauseRecognizer()
+      readingPausedRef.current = wasMonitoring
+    }
+    setReadingReply(true)
+    pumpQueue()
+  }
+
   /** Stop the in-flight reply reading (user taps the mic while it reads). */
   const stopReading = (): void => {
+    ttsQueueRef.current = []
+    ttsFinalizedRef.current = true
     speakerRef.current?.stop()
     finishReading()
   }
 
-  const speakReply = (text: string): void => {
-    const sp = speakerRef.current
-    if (sp === null) return
-    // Suppress recognition while the reply is read aloud so the speaker's
-    // audio is not picked up by the mic and echoed into the draft. Monitoring
-    // state is preserved and the recognizer resumes when reading finishes.
-    const wasMonitoring = monitoringRef.current
-    if (wasMonitoring) pauseRecognizer()
-    readingPausedRef.current = wasMonitoring
-    sp.onend = finishReading
-    setReadingReply(true)
-    console.info(`[dsh-voice] reading reply aloud: ${text.slice(0, 40)}${text.length > 40 ? '…' : ''}`)
-    sp.speak(text)
-  }
+  // Streaming reply reading: speak each completed sentence as the assistant
+  // streams, so the reply is heard while the model is still generating. The
+  // spoken prefix advances only past enqueued segments; a trailing incomplete
+  // sentence stays un-spoken and is spoken when it completes or on finalize.
+  useEffect(() => {
+    if (!chatArmedRef.current) return
+    const current = extractPartialText(partial)
+    if (current.length === 0) return
+    // On revision/shrink the already-spoken prefix stays historical; only text
+    // after the common prefix is newly spoken.
+    const covered = commonPrefixLength(current, ttsSpokenPrefixRef.current)
+    ttsSpokenPrefixRef.current = current.slice(0, covered)
+    const newText = current.slice(covered)
+    const parts = splitStreamSegments(newText)
+    if (parts.length === 0) return
+    const segments: string[] = []
+    let lastEnd = 0
+    for (const part of parts) {
+      segments.push(part.segment)
+      lastEnd = part.end
+    }
+    ttsSpokenPrefixRef.current = current.slice(0, covered + lastEnd)
+    enqueueReplySegments(segments)
+  }, [partial])
 
   /**
    * Arm reply reading: only the assistant reply arriving after the current
@@ -147,19 +235,22 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
     }
   }, [chatNodes])
 
-  // Voice chat: after a hold-submit, speak the NEXT finalized assistant
-  // message (read from the durable chat history, not the streaming partial —
-  // a fast reply can finalize before partial is observed). Speak exactly once.
+  // Finalized tail: when the reply completes, speak any text not yet streamed
+  // (a short no-delimiter reply, or the last incomplete sentence), then disarm.
   useEffect(() => {
     if (!chatArmedRef.current) return
     for (let i = chatNodes.length - 1; i >= 0; i--) {
       const node = chatNodes[i]!
       if (node.kind === 'assistant' && node.seq > replySeqRef.current) {
-        const text = extractPartialText(node)
-        if (text.length > 0) {
-          replySeqRef.current = node.seq
-          chatArmedRef.current = false
-          speakReply(text)
+        ttsFinalizedRef.current = true
+        replySeqRef.current = node.seq
+        chatArmedRef.current = false
+        const fullText = extractPartialText(node)
+        const remaining = fullText.slice(commonPrefixLength(fullText, ttsSpokenPrefixRef.current))
+        if (remaining.trim().length > 0) {
+          enqueueReplySegments([remaining])
+        } else if (ttsQueueRef.current.length === 0 && !ttsSpeakingRef.current) {
+          finishReading()
         }
         break
       }
@@ -250,11 +341,14 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
   const onPointerDown = (): void => {
     if (micState === 'unsupported') return
     // A tap while the reply is being read aloud stops it (the mic is the
-    // stop control for an over-long reply).
+    // stop control for an over-long reply). The pointer-up is consumed so the
+    // stop does not also toggle monitoring or submit anything.
     if (readingReply) {
+      stopTapRef.current = true
       stopReading()
       return
     }
+    stopTapRef.current = false
     // The pointer-down is a user gesture: unlock reply audio here so the
     // assistant's reply (which arrives seconds later) is exempt from the
     // browser autoplay policy.
@@ -269,6 +363,7 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
   }
 
   const onPointerUp = (): void => {
+    if (stopTapRef.current) { stopTapRef.current = false; return }
     if (holdTimerRef.current !== null) { clearTimeout(holdTimerRef.current); holdTimerRef.current = null }
     if (wasListeningRef.current) {
       stopMonitoring() // tap again → stop monitoring

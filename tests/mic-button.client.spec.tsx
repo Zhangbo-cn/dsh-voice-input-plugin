@@ -154,7 +154,13 @@ describe('MicButton tap toggles continuous monitoring', () => {
 describe('MicButton voice-chat reply speaking', () => {
   /** Neutralize jsdom's unimplemented media/object-URL APIs so the host TTS path runs. */
   function stubMedia(): void {
-    Object.defineProperty(HTMLMediaElement.prototype, 'play', { value: vi.fn().mockResolvedValue(undefined), configurable: true })
+    // A stubbed play() completes "immediately": the element's onended fires on
+    // the next tick, as a real <audio> would when playback ends — so the reply
+    // queue drains between segments.
+    Object.defineProperty(HTMLMediaElement.prototype, 'play', {
+      value: vi.fn(function (this: HTMLAudioElement) { setTimeout(() => { this.onended?.() }, 0); return Promise.resolve() }),
+      configurable: true,
+    })
     Object.defineProperty(HTMLMediaElement.prototype, 'pause', { value: vi.fn(), configurable: true })
     Object.defineProperty(URL, 'createObjectURL', { value: vi.fn(() => 'blob:fake'), configurable: true })
     Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), configurable: true })
@@ -296,6 +302,44 @@ describe('MicButton voice-chat reply speaking', () => {
     expect(FakeRecognition.instances[1]!.started).toBe(true)
   })
 
+  it('reads complete sentences as the reply streams, then the tail on finalize', async () => {
+    stubMedia()
+    const fetchMock = vi.fn(async () => new Response('audio-data', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const state = {
+      nodes: [] as { kind: string; seq: number; blocks: { kind: string; text: string }[] }[],
+      partial: null as { blocks: { kind: string; text: string }[] } | null,
+    }
+    const view = render(<MicButton {...streamProps(state, vi.fn())} />)
+    // A voice send arms reply reading.
+    fireEvent.pointerDown(screen.getByRole('button', { name: '语音输入' }))
+    fireEvent.pointerUp(screen.getByRole('button', { name: '语音输入' }))
+    state.nodes = [{ kind: 'user', seq: 4, blocks: [] }]
+    view.rerender(<MicButton {...streamProps(state, vi.fn())} />)
+
+    // A sentence completes while the model is still generating → spoken immediately.
+    state.partial = { blocks: [{ kind: 'text', text: '这是第一句。' }] }
+    view.rerender(<MicButton {...streamProps(state, vi.fn())} />)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(decodeURIComponent(fetchMock.mock.calls[0]![0] as string)).toContain('这是第一句')
+
+    // A trailing incomplete sentence is buffered, not spoken mid-sentence…
+    state.partial = { blocks: [{ kind: 'text', text: '这是第一句。这是第二句' }] }
+    view.rerender(<MicButton {...streamProps(state, vi.fn())} />)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    // …and spoken when the reply finalizes (after the first segment finishes).
+    state.partial = null
+    state.nodes = [
+      { kind: 'user', seq: 4, blocks: [] },
+      { kind: 'assistant', seq: 5, blocks: [{ kind: 'text', text: '这是第一句。这是第二句' }] },
+    ]
+    await act(async () => { view.rerender(<MicButton {...streamProps(state, vi.fn())} />) })
+    await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 5) }) })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(decodeURIComponent(fetchMock.mock.calls[1]![0] as string)).toContain('这是第二句')
+  })
+
   it('does not read the reply after a typed send when the mic was never used', () => {
     stubMedia()
     const fetchMock = vi.fn(async () => new Response('audio-data', { status: 200 }))
@@ -321,6 +365,25 @@ function holdAndSubmitProps(
     useInput: (selector: (s: { draft: string }) => string) => selector({ draft: 'hello' }),
     useSession: (selector: (s: { chat: { legacy: { nodes: typeof nodes.current } } }) => unknown) =>
       selector({ chat: { legacy: { nodes: nodes.current } } }),
+    inputActions: { setDraft: vi.fn(), submit },
+    language: 'zh-CN',
+    interimResults: true,
+    t: (key: keyof typeof zh) => zh[key],
+  } as unknown as MicButtonProps
+}
+
+/** Props whose `useSession` also exposes a streaming `partial` (for reply-reading tests). */
+function streamProps(
+  state: {
+    nodes: { kind: string; seq: number; blocks: { kind: string; text: string }[] }[]
+    partial: { blocks: { kind: string; text: string }[] } | null
+  },
+  submit: ReturnType<typeof vi.fn>,
+): MicButtonProps {
+  return {
+    useInput: (selector: (s: { draft: string }) => string) => selector({ draft: 'hello' }),
+    useSession: (selector: (s: { chat: { legacy: { nodes: typeof state.nodes } }; partial: typeof state.partial }) => unknown) =>
+      selector({ chat: { legacy: { nodes: state.nodes } }, partial: state.partial }),
     inputActions: { setDraft: vi.fn(), submit },
     language: 'zh-CN',
     interimResults: true,

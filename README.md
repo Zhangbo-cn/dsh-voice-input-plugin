@@ -79,17 +79,21 @@ MicButton (conversation.input.left)
   │     → tap again → stop
   └─ hold → submitChat()
         → on release: stop + inputActions.setDraft(text) + inputActions.submit()
-        → reply → createReplySpeaker()
-              → fetch /api/tts (host Edge neural MP3)
+        → reply streams → complete sentences read aloud WHILE the model
+          generates (sentence-chunked queue)
+        → tail (last incomplete sentence) read on finalize
+        → each segment → fetch /api/tts (host Edge neural MP3)
               → play via gesture-unlocked AudioContext (else <audio> element)
               → fallback: browser speechSynthesis
 ```
 
 - Recognition starts on pointer-down (a user gesture — required by the Web Speech API); tap vs hold is decided on release.
 - The same pointer-down gesture unlocks reply audio (a shared `AudioContext` is resumed), so the assistant's reply — which arrives seconds later — is exempt from the browser autoplay policy that would otherwise block a plain `HTMLMediaElement.play()`.
+- **Reply reading streams**: complete sentences are read aloud while the model is still generating (a sentence-chunked queue, flushed at ~30 chars for delimiter-less runs); the last incomplete sentence is read on finalize. The mic icon pulses deep blue while reading, and **tapping the mic stops the reading**.
+- **No speaker-echo**: while the reply is being read, recognition is paused (the mic physically picks up the speaker), then resumes when reading finishes if monitoring was on.
 - `continuous: false` per segment is intentional: Chrome's `continuous: true` fails to deliver `onresult`, so monitoring is achieved by auto-restarting segments.
 - The append base resets when the draft changes externally, so a send never lets stale voice text re-fill the box.
-- While the reply is being read aloud, the mic icon stays highlighted (deep blue pulse) as a "reading" indicator; the console logs `[dsh-voice]` diagnostics for the attempt and any fallback.
+- The console logs `[dsh-voice]` diagnostics for each read segment and any fallback.
 
 ## Compatibility
 
@@ -107,7 +111,7 @@ Notes:
 ## Tests
 
 ```sh
-npx vitest run   # 23 tests: tap monitoring, hold submit, auto-restart, send-clear, host/browser reply reading, tap-send arming
+npx vitest run   # 26 tests: tap monitoring, hold submit, auto-restart, send-clear, streaming reply reading, tap-send arming, stop-reading
 ```
 
 ## License

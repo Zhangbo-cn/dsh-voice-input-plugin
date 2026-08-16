@@ -191,9 +191,13 @@ export function createReplySpeaker(fetchImpl: FetchLike = globalThis.fetch.bind(
   let browser: TtsSpeakerLike | undefined
   let speaking = false
   let onEnd: (() => void) | null = null
+  let activeSource: AudioBufferSourceNode | null = null
+  let activeUrl: string | null = null
 
   const finish = (): void => {
     speaking = false
+    activeSource = null
+    activeUrl = null
     onEnd?.()
   }
 
@@ -206,7 +210,8 @@ export function createReplySpeaker(fetchImpl: FetchLike = globalThis.fetch.bind(
         const source = ctx.createBufferSource()
         source.buffer = decoded
         source.connect(ctx.destination)
-        source.onended = finish
+        source.onended = () => { activeSource = null; finish() }
+        activeSource = source
         source.start()
         return
       } catch {
@@ -214,15 +219,36 @@ export function createReplySpeaker(fetchImpl: FetchLike = globalThis.fetch.bind(
       }
     }
     const url = URL.createObjectURL(new Blob([buffer], { type: 'audio/mpeg' }))
+    activeUrl = url
     audio.src = url
-    audio.onended = finish
-    audio.onerror = () => { finish(); URL.revokeObjectURL(url) }
+    audio.onended = () => { activeUrl = null; finish() }
+    audio.onerror = () => { const u = activeUrl; activeUrl = null; if (u !== null) URL.revokeObjectURL(u); finish() }
     try {
       await audio.play()
     } catch (error) {
-      URL.revokeObjectURL(url)
+      const u = activeUrl; activeUrl = null
+      if (u !== null) URL.revokeObjectURL(u)
       throw error
     }
+  }
+
+  /**
+   * Stop every playback path without firing the end callback (a manual stop
+   * must not look like a natural end to the caller's queue logic).
+   */
+  const stopAll = (): void => {
+    if (activeSource !== null) {
+      activeSource.onended = null
+      try { activeSource.stop() } catch { /* already stopped */ }
+      activeSource = null
+    }
+    audio.onended = null
+    audio.pause()
+    const url = activeUrl; activeUrl = null
+    if (url !== null) URL.revokeObjectURL(url)
+    browser?.stop()
+    browser = undefined
+    speaking = false
   }
 
   return {
@@ -237,8 +263,7 @@ export function createReplySpeaker(fetchImpl: FetchLike = globalThis.fetch.bind(
     },
     speak(text: string) {
       if (text.trim().length === 0) return
-      audio.pause()
-      browser?.stop()
+      stopAll()
       speaking = true
       void fetchImpl(`/api/tts?text=${encodeURIComponent(text)}`)
         .then((response) => {
@@ -255,9 +280,7 @@ export function createReplySpeaker(fetchImpl: FetchLike = globalThis.fetch.bind(
         })
     },
     stop() {
-      audio.pause()
-      browser?.stop()
-      speaking = false
+      stopAll()
     },
   }
 }
