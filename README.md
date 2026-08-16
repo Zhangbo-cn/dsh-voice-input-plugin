@@ -54,6 +54,10 @@ After refreshing the Web UI, the composer tool row shows a linear mic button.
 2. **Release** → your message is sent.
 3. The assistant's reply is read aloud automatically.
 
+### Reply reading after any send
+
+A send that follows mic use (within 5 minutes) — hold **or** tap-monitoring + the composer send button — arms reply reading for the next assistant reply. Typed sends without recent mic use do not trigger it.
+
 ### Configuration
 
 ```yaml
@@ -103,7 +107,7 @@ Notes:
 ## Tests
 
 ```sh
-npx vitest run   # 21 tests: tap monitoring, hold submit, auto-restart, send-clear, host/browser reply reading
+npx vitest run   # 23 tests: tap monitoring, hold submit, auto-restart, send-clear, host/browser reply reading, tap-send arming
 ```
 
 ## License

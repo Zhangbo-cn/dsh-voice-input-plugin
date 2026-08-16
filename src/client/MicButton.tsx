@@ -55,6 +55,8 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
   const lastDraftRef = useRef('')
   const chatArmedRef = useRef(false)
   const replySeqRef = useRef(-1)
+  const lastUserSeqRef = useRef(-1)
+  const micUsedAtRef = useRef(0)
   const speakerRef = useRef<TtsSpeakerLike | null>(null)
   if (speakerRef.current === null) speakerRef.current = createReplySpeaker()
 
@@ -65,6 +67,20 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
     setReadingReply(true)
     console.info(`[dsh-voice] reading reply aloud: ${text.slice(0, 40)}${text.length > 40 ? '…' : ''}`)
     sp.speak(text)
+  }
+
+  /**
+   * Arm reply reading: only the assistant reply arriving after the current
+   * maximum assistant seq will be spoken (baseline from nodes strictly before
+   * `afterSeq`, so a same-batch reply is not skipped).
+   */
+  const armReplyReading = (afterSeq: number): void => {
+    const maxSeq = chatNodesRef.current.reduce(
+      (max, node) => node.kind === 'assistant' && node.seq < afterSeq ? Math.max(max, node.seq) : max,
+      -1,
+    )
+    replySeqRef.current = maxSeq
+    chatArmedRef.current = true
   }
 
   // When the draft changes externally (a send cleared it, or the user typed):
@@ -81,6 +97,20 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
     lastDraftRef.current = draft
     setByUsRef.current = false
   }, [draft])
+
+  // A send that happens right after mic use arms reply reading for the next
+  // assistant reply — covering both hold-to-talk and tap-monitoring sends,
+  // not just the hold path. A long mic pause (5 min) treats typing as non-voice.
+  useEffect(() => {
+    for (let i = chatNodes.length - 1; i >= 0; i--) {
+      const node = chatNodes[i]!
+      if (node.kind === 'user' && node.seq > lastUserSeqRef.current) {
+        lastUserSeqRef.current = node.seq
+        if (Date.now() - micUsedAtRef.current < 5 * 60 * 1000) armReplyReading(node.seq)
+        break
+      }
+    }
+  }, [chatNodes])
 
   // Voice chat: after a hold-submit, speak the NEXT finalized assistant
   // message (read from the durable chat history, not the streaming partial —
@@ -168,12 +198,9 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
   const submitChat = (): void => {
     monitoringRef.current = false
     // Baseline: only speak the assistant reply that arrives AFTER this submit.
-    const maxSeq = chatNodesRef.current.reduce(
-      (max, node) => node.kind === 'assistant' ? Math.max(max, node.seq) : max,
-      -1,
-    )
-    replySeqRef.current = maxSeq
-    chatArmedRef.current = true
+    // The bounded baseline covers the same-batch case; the user-node effect
+    // re-arms on the admitted message for tap-monitoring sends.
+    armReplyReading(Infinity)
     const rec = recRef.current
     recRef.current = null
     rec?.stop()
@@ -191,6 +218,7 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
     // assistant's reply (which arrives seconds later) is exempt from the
     // browser autoplay policy.
     unlockReplyAudio()
+    micUsedAtRef.current = Date.now()
     wasListeningRef.current = micState === 'listening'
     holdingRef.current = false
     if (!wasListeningRef.current) {

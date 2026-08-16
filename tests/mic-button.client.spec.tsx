@@ -228,6 +228,41 @@ describe('MicButton voice-chat reply speaking', () => {
     const utterance = speak.mock.calls[0]![0] as { text: string }
     expect(utterance.text).toBe('这是一段回复')
   })
+
+  it('reads the reply after a tap-monitoring send when the mic was used recently', () => {
+    stubMedia()
+    const fetchMock = vi.fn(async () => new Response('audio-data', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const nodes = { current: [] as { kind: string; seq: number; blocks: { kind: string; text: string }[] }[] }
+    const view = render(<MicButton {...holdAndSubmitProps(nodes, vi.fn())} />)
+    // A quick tap (monitoring toggle) counts as recent mic use for the arming gate.
+    fireEvent.pointerDown(screen.getByRole('button', { name: '语音输入' }))
+    fireEvent.pointerUp(screen.getByRole('button', { name: '语音输入' }))
+
+    // A send admits a user message, then the assistant reply finalizes.
+    nodes.current = [
+      { kind: 'user', seq: 4, blocks: [] },
+      { kind: 'assistant', seq: 5, blocks: [{ kind: 'text', text: '这是一段回复' }] },
+    ]
+    view.rerender(<MicButton {...holdAndSubmitProps(nodes, vi.fn())} />)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(decodeURIComponent(fetchMock.mock.calls[0]![0] as string)).toContain('这是一段回复')
+  })
+
+  it('does not read the reply after a typed send when the mic was never used', () => {
+    stubMedia()
+    const fetchMock = vi.fn(async () => new Response('audio-data', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const nodes = { current: [] as { kind: string; seq: number; blocks: { kind: string; text: string }[] }[] }
+    const view = render(<MicButton {...holdAndSubmitProps(nodes, vi.fn())} />)
+    // No mic gesture: a typed send admits a user message, then the reply finalizes.
+    nodes.current = [
+      { kind: 'user', seq: 4, blocks: [] },
+      { kind: 'assistant', seq: 5, blocks: [{ kind: 'text', text: '这是一段回复' }] },
+    ]
+    view.rerender(<MicButton {...holdAndSubmitProps(nodes, vi.fn())} />)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
 })
 
 /** Build the MicButton props for a rerender; keeps the render() helper single-use. */
