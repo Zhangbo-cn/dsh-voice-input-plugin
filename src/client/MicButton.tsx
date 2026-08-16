@@ -71,6 +71,24 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
     }
   }
 
+  /** Whether reading paused a live recognizer (so stopping reading must resume it). */
+  const readingPausedRef = useRef(false)
+
+  /** End reply reading (naturally or by user stop): clear state and resume monitoring if paused. */
+  const finishReading = (): void => {
+    setReadingReply(false)
+    if (readingPausedRef.current) {
+      readingPausedRef.current = false
+      if (monitoringRef.current) startRecognizer()
+    }
+  }
+
+  /** Stop the in-flight reply reading (user taps the mic while it reads). */
+  const stopReading = (): void => {
+    speakerRef.current?.stop()
+    finishReading()
+  }
+
   const speakReply = (text: string): void => {
     const sp = speakerRef.current
     if (sp === null) return
@@ -79,10 +97,8 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
     // state is preserved and the recognizer resumes when reading finishes.
     const wasMonitoring = monitoringRef.current
     if (wasMonitoring) pauseRecognizer()
-    sp.onend = () => {
-      setReadingReply(false)
-      if (wasMonitoring) startRecognizer()
-    }
+    readingPausedRef.current = wasMonitoring
+    sp.onend = finishReading
     setReadingReply(true)
     console.info(`[dsh-voice] reading reply aloud: ${text.slice(0, 40)}${text.length > 40 ? '…' : ''}`)
     sp.speak(text)
@@ -233,6 +249,12 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
 
   const onPointerDown = (): void => {
     if (micState === 'unsupported') return
+    // A tap while the reply is being read aloud stops it (the mic is the
+    // stop control for an over-long reply).
+    if (readingReply) {
+      stopReading()
+      return
+    }
     // The pointer-down is a user gesture: unlock reply audio here so the
     // assistant's reply (which arrives seconds later) is exempt from the
     // browser autoplay policy.
@@ -296,12 +318,12 @@ function MicIcon({ listening, readingReply }: { listening: boolean; readingReply
         {`@keyframes dsh-mic-pulse{0%,100%{opacity:1}50%{opacity:.45}}`
         + `.dsh-voice-input{border:none;background:transparent;padding:4px;cursor:pointer;display:inline-flex;align-items:center;line-height:0;color:inherit;border-radius:6px}`
         + `.dsh-voice-input:hover{background:var(--dsw-alias-interactive-bg-hover);opacity:1}`
-        + `.dsh-voice-icon{display:inline-flex;width:17px;height:17px;color:${active ? DEEPSEEK_BLUE : 'var(--dsw-alias-label-primary)'}}`
+        + `.dsh-voice-icon{display:inline-flex;width:17px;height:17px;color:${active ? DEEPSEEK_BLUE : 'var(--dsw-alias-label-secondary)'}}`
         + `.dsh-voice-icon svg{width:100%;height:100%}`
         + `.dsh-voice-input[aria-pressed="true"] .dsh-voice-icon{animation:dsh-mic-pulse 1s ease-in-out infinite}`
         + `.dsh-voice-input[data-reading] .dsh-voice-icon{animation:dsh-mic-pulse 1s ease-in-out infinite}`}
       </style>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
         <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
         <line x1="12" y1="19" x2="12" y2="23" />

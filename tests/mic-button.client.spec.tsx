@@ -271,6 +271,31 @@ describe('MicButton voice-chat reply speaking', () => {
     expect(FakeRecognition.instances[0]!.started).toBe(false)
   })
 
+  it('stops the reply reading when the mic is tapped while reading, and resumes monitoring', () => {
+    stubMedia()
+    const fetchMock = vi.fn(async () => new Response('audio-data', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const nodes = { current: [] as { kind: string; seq: number; blocks: { kind: string; text: string }[] }[] }
+    const view = render(<MicButton {...holdAndSubmitProps(nodes, vi.fn())} />)
+    fireEvent.pointerDown(screen.getByRole('button', { name: '语音输入' }))
+    fireEvent.pointerUp(screen.getByRole('button', { name: '语音输入' }))
+    // A reply arrives → reading starts, recognizer paused.
+    nodes.current = [
+      { kind: 'user', seq: 4, blocks: [] },
+      { kind: 'assistant', seq: 5, blocks: [{ kind: 'text', text: '很长很长的回复' }] },
+    ]
+    view.rerender(<MicButton {...holdAndSubmitProps(nodes, vi.fn())} />)
+    const btn = screen.getByRole('button', { name: '语音输入' })
+    expect(btn.getAttribute('data-reading')).toBe('true')
+    expect(FakeRecognition.instances[0]!.started).toBe(false)
+
+    // Tapping the mic while it reads stops the reading and resumes monitoring.
+    fireEvent.pointerDown(btn)
+    fireEvent.pointerUp(btn)
+    expect(btn.getAttribute('data-reading')).toBe(null)
+    expect(FakeRecognition.instances[1]!.started).toBe(true)
+  })
+
   it('does not read the reply after a typed send when the mic was never used', () => {
     stubMedia()
     const fetchMock = vi.fn(async () => new Response('audio-data', { status: 200 }))
