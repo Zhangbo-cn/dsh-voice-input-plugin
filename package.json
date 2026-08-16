@@ -1,7 +1,11 @@
 {
   "name": "@zhangbo-cn/dsh-client-ui-voice-input",
   "version": "0.1.0",
-  "description": "Composer voice-input control for DeepSeek Harness: a mic button that transcribes browser Web Speech recognition into the draft.",
+  "description": "Composer mic for DeepSeek Harness Web: tap-to-monitor live transcription and hold-to-talk, with host Edge TTS reply reading that streams while the model generates, echo-pause during reading, and tap-to-stop.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Zhangbo-cn/dsh-voice-input-plugin.git"
+  },
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -22,6 +26,9 @@
     "./package.json": "./package.json"
   },
   "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-locale",
@@ -34,6 +41,13 @@
   "scripts": {
     "bundle": "tsdown"
   },
+  "files": [
+    "lib/index.js",
+    "lib/invariant.js",
+    "lib/client.js",
+    "lib/types/**/*.d.ts",
+    "cordis.patch.yml"
+  ],
   "license": "MIT",
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
