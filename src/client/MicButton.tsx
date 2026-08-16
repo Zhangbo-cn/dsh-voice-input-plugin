@@ -60,10 +60,29 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
   const speakerRef = useRef<TtsSpeakerLike | null>(null)
   if (speakerRef.current === null) speakerRef.current = createReplySpeaker()
 
+  /** Stop the live recognizer and suppress its handlers, leaving monitoring state intact. */
+  const pauseRecognizer = (): void => {
+    const rec = recRef.current
+    recRef.current = null
+    if (rec !== null) {
+      rec.onend = () => {}
+      rec.onerror = () => {}
+      rec.stop()
+    }
+  }
+
   const speakReply = (text: string): void => {
     const sp = speakerRef.current
     if (sp === null) return
-    sp.onend = () => setReadingReply(false)
+    // Suppress recognition while the reply is read aloud so the speaker's
+    // audio is not picked up by the mic and echoed into the draft. Monitoring
+    // state is preserved and the recognizer resumes when reading finishes.
+    const wasMonitoring = monitoringRef.current
+    if (wasMonitoring) pauseRecognizer()
+    sp.onend = () => {
+      setReadingReply(false)
+      if (wasMonitoring) startRecognizer()
+    }
     setReadingReply(true)
     console.info(`[dsh-voice] reading reply aloud: ${text.slice(0, 40)}${text.length > 40 ? '…' : ''}`)
     sp.speak(text)
@@ -280,7 +299,7 @@ function MicIcon({ listening, readingReply }: { listening: boolean; readingReply
         + `.dsh-voice-icon{display:inline-flex;width:14px;height:14px;color:${active ? DEEPSEEK_BLUE : 'currentColor'}}`
         + `.dsh-voice-icon svg{width:100%;height:100%}`
         + `.dsh-voice-input[aria-pressed="true"] .dsh-voice-icon{animation:dsh-mic-pulse 1s ease-in-out infinite}`
-        + `.dsh-voice-input[data-reading] .dsh-voice-icon{animation:dsh-mic-pulse 1s ease-in-out infinite}}`}
+        + `.dsh-voice-input[data-reading] .dsh-voice-icon{animation:dsh-mic-pulse 1s ease-in-out infinite}`}
       </style>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />

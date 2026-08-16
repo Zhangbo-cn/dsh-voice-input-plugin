@@ -249,6 +249,28 @@ describe('MicButton voice-chat reply speaking', () => {
     expect(decodeURIComponent(fetchMock.mock.calls[0]![0] as string)).toContain('这是一段回复')
   })
 
+  it('pauses recognition while the reply is read aloud (no echo transcription)', () => {
+    stubMedia()
+    const fetchMock = vi.fn(async () => new Response('audio-data', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const nodes = { current: [] as { kind: string; seq: number; blocks: { kind: string; text: string }[] }[] }
+    const view = render(<MicButton {...holdAndSubmitProps(nodes, vi.fn())} />)
+    // Tap monitoring stays on; the recognizer is live.
+    fireEvent.pointerDown(screen.getByRole('button', { name: '语音输入' }))
+    fireEvent.pointerUp(screen.getByRole('button', { name: '语音输入' }))
+    expect(FakeRecognition.instances[0]!.started).toBe(true)
+
+    // A send + finalized reply starts reading → the live recognizer is stopped
+    // so the speaker's audio cannot be picked up and echoed into the draft.
+    nodes.current = [
+      { kind: 'user', seq: 4, blocks: [] },
+      { kind: 'assistant', seq: 5, blocks: [{ kind: 'text', text: '这是一段回复' }] },
+    ]
+    view.rerender(<MicButton {...holdAndSubmitProps(nodes, vi.fn())} />)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(FakeRecognition.instances[0]!.started).toBe(false)
+  })
+
   it('does not read the reply after a typed send when the mic was never used', () => {
     stubMedia()
     const fetchMock = vi.fn(async () => new Response('audio-data', { status: 200 }))
