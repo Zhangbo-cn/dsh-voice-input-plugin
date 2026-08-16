@@ -76,13 +76,16 @@ MicButton (conversation.input.left)
   └─ hold → submitChat()
         → on release: stop + inputActions.setDraft(text) + inputActions.submit()
         → reply → createReplySpeaker()
-              → fetch /api/tts (host Edge neural MP3) → <audio>.play()
+              → fetch /api/tts (host Edge neural MP3)
+              → play via gesture-unlocked AudioContext (else <audio> element)
               → fallback: browser speechSynthesis
 ```
 
 - Recognition starts on pointer-down (a user gesture — required by the Web Speech API); tap vs hold is decided on release.
+- The same pointer-down gesture unlocks reply audio (a shared `AudioContext` is resumed), so the assistant's reply — which arrives seconds later — is exempt from the browser autoplay policy that would otherwise block a plain `HTMLMediaElement.play()`.
 - `continuous: false` per segment is intentional: Chrome's `continuous: true` fails to deliver `onresult`, so monitoring is achieved by auto-restarting segments.
 - The append base resets when the draft changes externally, so a send never lets stale voice text re-fill the box.
+- While the reply is being read aloud, the mic icon stays highlighted (deep blue pulse) as a "reading" indicator; the console logs `[dsh-voice]` diagnostics for the attempt and any fallback.
 
 ## Compatibility
 

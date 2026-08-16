@@ -158,22 +158,83 @@ export function createBrowserSpeaker(): TtsSpeakerLike {
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 
 /**
+ * Shared Web Audio context. Resumed inside the mic gesture so reply playback
+ * through it is exempt from the browser autoplay policy (a plain
+ * `HTMLMediaElement.play()` is blocked when it runs after the gesture window).
+ */
+let replyAudioCtx: AudioContext | undefined
+
+/**
+ * Unlock reply audio within a user gesture (the mic pointer-down): create and
+ * resume the shared AudioContext so the reply is later playable. No-op when
+ * Web Audio is unavailable — playback falls back to an `<audio>` element,
+ * which is allowed once the user has interacted with the page.
+ */
+export function unlockReplyAudio(): void {
+  try {
+    replyAudioCtx ??= new AudioContext()
+    if (replyAudioCtx.state === 'suspended') void replyAudioCtx.resume()
+  } catch {
+    replyAudioCtx = undefined
+  }
+}
+
+/**
  * A TTS speaker preferring the host `/api/tts` route — Edge neural voices
  * synthesized server-side and served as MP3 — and falling back to the browser
- * `speechSynthesis` when the route is unreachable or fails. The browser
- * fallback keeps reply reading alive against a host without the tts-edge
- * capability, at the cost of the browser's less reliable voices.
+ * `speechSynthesis` when the route is unreachable or fails. Playback runs
+ * through the gesture-unlocked Web Audio context when available, else an
+ * `<audio>` element, so it is not subject to the autoplay policy.
  */
 export function createReplySpeaker(fetchImpl: FetchLike = globalThis.fetch.bind(globalThis)): TtsSpeakerLike {
   const audio = new Audio()
   let browser: TtsSpeakerLike | undefined
   let speaking = false
+  let onEnd: (() => void) | null = null
 
-  const speaker: TtsSpeakerLike = {
+  const finish = (): void => {
+    speaking = false
+    onEnd?.()
+  }
+
+  /** Play a synthesized MP3, preferring Web Audio; an `<audio>` element is the fallback. */
+  const playBuffer = async (buffer: ArrayBuffer): Promise<void> => {
+    const ctx = replyAudioCtx
+    if (ctx !== undefined) {
+      try {
+        const decoded = await ctx.decodeAudioData(buffer.slice(0))
+        const source = ctx.createBufferSource()
+        source.buffer = decoded
+        source.connect(ctx.destination)
+        source.onended = finish
+        source.start()
+        return
+      } catch {
+        // decode failure → element playback below
+      }
+    }
+    const url = URL.createObjectURL(new Blob([buffer], { type: 'audio/mpeg' }))
+    audio.src = url
+    audio.onended = finish
+    audio.onerror = () => { finish(); URL.revokeObjectURL(url) }
+    try {
+      await audio.play()
+    } catch (error) {
+      URL.revokeObjectURL(url)
+      throw error
+    }
+  }
+
+  return {
     get speaking() {
       return speaking
     },
-    onend: null,
+    get onend() {
+      return onEnd
+    },
+    set onend(callback: (() => void) | null) {
+      onEnd = callback
+    },
     speak(text: string) {
       if (text.trim().length === 0) return
       audio.pause()
@@ -182,18 +243,13 @@ export function createReplySpeaker(fetchImpl: FetchLike = globalThis.fetch.bind(
       void fetchImpl(`/api/tts?text=${encodeURIComponent(text)}`)
         .then((response) => {
           if (!response.ok) throw new Error(`host TTS responded ${response.status}`)
-          return response.blob()
+          return response.arrayBuffer()
         })
-        .then((blob) => {
-          const url = URL.createObjectURL(blob)
-          audio.src = url
-          audio.onended = () => { speaking = false; speaker.onend?.() }
-          audio.onerror = () => { speaking = false; URL.revokeObjectURL(url) }
-          return audio.play()
-        })
+        .then((buffer) => playBuffer(buffer))
         .catch(() => {
+          console.warn('[dsh-voice] host /api/tts failed; falling back to browser speechSynthesis')
           const fallback = createBrowserSpeaker()
-          fallback.onend = () => { speaking = false; speaker.onend?.() }
+          fallback.onend = finish
           browser = fallback
           fallback.speak(text)
         })
@@ -204,5 +260,4 @@ export function createReplySpeaker(fetchImpl: FetchLike = globalThis.fetch.bind(
       speaking = false
     },
   }
-  return speaker
 }

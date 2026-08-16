@@ -14,7 +14,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { applyResults, createBrowserRecognition, createReplySpeaker, TranscriptAccumulator, type TtsSpeakerLike, type VoiceRecognitionLike } from './speech.ts'
+import { applyResults, createBrowserRecognition, createReplySpeaker, TranscriptAccumulator, unlockReplyAudio, type TtsSpeakerLike, type VoiceRecognitionLike } from './speech.ts'
 import type { MicButtonInjected } from './index.ts'
 
 export type MicButtonProps = PropsRuntime<'conversation.input.left'> & MicButtonInjected & PropsLocale<'voice'>
@@ -43,6 +43,7 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
   const chatNodesRef = useRef(chatNodes)
   chatNodesRef.current = chatNodes
   const [micState, setMicState] = useState<MicState>('idle')
+  const [readingReply, setReadingReply] = useState(false)
   const recRef = useRef<VoiceRecognitionLike | null>(null)
   const monitoringRef = useRef(false)
   const baseRef = useRef('')
@@ -58,7 +59,12 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
   if (speakerRef.current === null) speakerRef.current = createReplySpeaker()
 
   const speakReply = (text: string): void => {
-    speakerRef.current?.speak(text)
+    const sp = speakerRef.current
+    if (sp === null) return
+    sp.onend = () => setReadingReply(false)
+    setReadingReply(true)
+    console.info(`[dsh-voice] reading reply aloud: ${text.slice(0, 40)}${text.length > 40 ? '…' : ''}`)
+    sp.speak(text)
   }
 
   // When the draft changes externally (a send cleared it, or the user typed):
@@ -181,6 +187,10 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
 
   const onPointerDown = (): void => {
     if (micState === 'unsupported') return
+    // The pointer-down is a user gesture: unlock reply audio here so the
+    // assistant's reply (which arrives seconds later) is exempt from the
+    // browser autoplay policy.
+    unlockReplyAudio()
     wasListeningRef.current = micState === 'listening'
     holdingRef.current = false
     if (!wasListeningRef.current) {
@@ -220,26 +230,29 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
         onPointerLeave={onPointerLeave}
         aria-pressed={listening}
         aria-label={t('mic.label')}
-        title={listening ? t('mic.title.listening') : t('mic.title')}
+        data-reading={readingReply || undefined}
+        title={readingReply ? t('mic.title.reading') : listening ? t('mic.title.listening') : t('mic.title')}
         disabled={micState === 'unsupported'}
       >
-        <MicIcon listening={listening} />
+        <MicIcon listening={listening} readingReply={readingReply} />
       </button>
     </span>
   )
 }
 
 /** A minimal linear (outline) mic icon; turns DeepSeek blue and pulses while listening. */
-function MicIcon({ listening }: { listening: boolean }): React.ReactElement {
+function MicIcon({ listening, readingReply }: { listening: boolean; readingReply: boolean }): React.ReactElement {
+  const active = listening || readingReply
   return (
     <span className="dsh-voice-icon" aria-hidden="true">
       <style>
         {`@keyframes dsh-mic-pulse{0%,100%{opacity:1}50%{opacity:.45}}`
         + `.dsh-voice-input{border:none;background:transparent;padding:2px;cursor:pointer;display:inline-flex;align-items:center;line-height:0;color:inherit}`
         + `.dsh-voice-input:hover{opacity:.8}`
-        + `.dsh-voice-icon{display:inline-flex;width:14px;height:14px;color:${listening ? DEEPSEEK_BLUE : 'currentColor'}}`
+        + `.dsh-voice-icon{display:inline-flex;width:14px;height:14px;color:${active ? DEEPSEEK_BLUE : 'currentColor'}}`
         + `.dsh-voice-icon svg{width:100%;height:100%}`
-        + `.dsh-voice-input[aria-pressed="true"] .dsh-voice-icon{animation:dsh-mic-pulse 1s ease-in-out infinite}}`}
+        + `.dsh-voice-input[aria-pressed="true"] .dsh-voice-icon{animation:dsh-mic-pulse 1s ease-in-out infinite}`
+        + `.dsh-voice-input[data-reading] .dsh-voice-icon{animation:dsh-mic-pulse 1s ease-in-out infinite}}`}
       </style>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
