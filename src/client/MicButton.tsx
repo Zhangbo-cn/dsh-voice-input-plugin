@@ -287,21 +287,21 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
   )
 }
 
-/** A minimal linear (outline) mic icon; turns DeepSeek blue and pulses while listening. */
+/** A linear mic icon; DeepSeek blue while listening/reading, theme primary otherwise. */
 function MicIcon({ listening, readingReply }: { listening: boolean; readingReply: boolean }): React.ReactElement {
   const active = listening || readingReply
   return (
     <span className="dsh-voice-icon" aria-hidden="true">
       <style>
         {`@keyframes dsh-mic-pulse{0%,100%{opacity:1}50%{opacity:.45}}`
-        + `.dsh-voice-input{border:none;background:transparent;padding:2px;cursor:pointer;display:inline-flex;align-items:center;line-height:0;color:inherit}`
-        + `.dsh-voice-input:hover{opacity:.8}`
-        + `.dsh-voice-icon{display:inline-flex;width:14px;height:14px;color:${active ? DEEPSEEK_BLUE : 'currentColor'}}`
+        + `.dsh-voice-input{border:none;background:transparent;padding:4px;cursor:pointer;display:inline-flex;align-items:center;line-height:0;color:inherit;border-radius:6px}`
+        + `.dsh-voice-input:hover{background:var(--dsw-alias-interactive-bg-hover);opacity:1}`
+        + `.dsh-voice-icon{display:inline-flex;width:17px;height:17px;color:${active ? DEEPSEEK_BLUE : 'var(--dsw-alias-label-primary)'}}`
         + `.dsh-voice-icon svg{width:100%;height:100%}`
         + `.dsh-voice-input[aria-pressed="true"] .dsh-voice-icon{animation:dsh-mic-pulse 1s ease-in-out infinite}`
         + `.dsh-voice-input[data-reading] .dsh-voice-icon{animation:dsh-mic-pulse 1s ease-in-out infinite}`}
       </style>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
         <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
         <line x1="12" y1="19" x2="12" y2="23" />
