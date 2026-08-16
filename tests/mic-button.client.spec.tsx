@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { zh } from '../src/client/locales.ts'
@@ -27,10 +28,6 @@ class FakeRecognition {
   emitResult(resultIndex: number, results: { isFinal: boolean; 0: { transcript: string } }[]): void {
     this.onresult?.({ resultIndex, results })
   }
-
-  emitError(error: string): void {
-    this.onerror?.({ error })
-  }
 }
 
 beforeEach(() => {
@@ -40,94 +37,141 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   delete (window as unknown as Record<string, unknown>).SpeechRecognition
-  delete (window as unknown as Record<string, unknown>).webkitSpeechRecognition
 })
 
-function renderButton(overrides: Partial<MicButtonProps> = {}): { setDraft: ReturnType<typeof vi.fn> } {
+function renderButton(): { setDraft: ReturnType<typeof vi.fn>; submit: ReturnType<typeof vi.fn> } {
   const setDraft = vi.fn()
+  const submit = vi.fn()
   const props = {
     useInput: (selector: (s: { draft: string }) => string) => selector({ draft: 'hello' }),
-    inputActions: { setDraft },
+    useSession: (selector: (s: { partial: unknown }) => unknown) => selector({ partial: null }),
+    inputActions: { setDraft, submit },
     language: 'zh-CN',
-    continuous: true,
     interimResults: true,
     t: (key: keyof typeof zh) => zh[key],
-    ...overrides,
   } as unknown as MicButtonProps
   render(<MicButton {...props} />)
-  return { setDraft }
+  return { setDraft, submit }
 }
 
-describe('MicButton', () => {
-  it('starts recognition on click and marks the button as pressed', () => {
+describe('MicButton tap toggles continuous monitoring', () => {
+  it('starts monitoring on the first tap (stays listening)', () => {
     renderButton()
     const button = screen.getByRole('button', { name: '语音输入' })
-    expect(button.getAttribute('aria-pressed')).toBe('false')
-    fireEvent.click(button)
+    fireEvent.pointerDown(button)
     expect(FakeRecognition.instances).toHaveLength(1)
     expect(FakeRecognition.instances[0]!.started).toBe(true)
+    fireEvent.pointerUp(button)
+    // A quick tap on idle keeps monitoring (toggle on).
     expect(button.getAttribute('aria-pressed')).toBe('true')
   })
 
-  it('appends the final transcript to the existing draft without duplicating interim', () => {
-    const { setDraft } = renderButton()
-    fireEvent.click(screen.getByRole('button', { name: '语音输入' }))
-    const rec = FakeRecognition.instances[0]!
+  it('auto-restarts the recognizer to keep monitoring across silences', () => {
+    vi.useFakeTimers()
+    renderButton()
+    const button = screen.getByRole('button', { name: '语音输入' })
+    fireEvent.pointerDown(button)
+    fireEvent.pointerUp(button)
+    expect(FakeRecognition.instances).toHaveLength(1)
+    // A segment ends (silence) while monitoring → the recognizer auto-restarts.
+    FakeRecognition.instances[0]!.onend?.()
+    expect(FakeRecognition.instances).toHaveLength(2)
+    expect(FakeRecognition.instances[1]!.started).toBe(true)
+  })
 
+  it('streams the transcript into the draft live as the user speaks', () => {
+    const { setDraft } = renderButton()
+    const button = screen.getByRole('button', { name: '语音输入' })
+    fireEvent.pointerDown(button)
+    fireEvent.pointerUp(button)
+    const rec = FakeRecognition.instances[0]!
     rec.emitResult(0, [{ isFinal: false, 0: { transcript: '你好' } }])
     expect(setDraft).toHaveBeenLastCalledWith('hello 你好')
-
-    // A later interim segment REPLACES the earlier one (no duplication).
     rec.emitResult(0, [{ isFinal: false, 0: { transcript: '你好世界' } }])
     expect(setDraft).toHaveBeenLastCalledWith('hello 你好世界')
-
-    // The final segment commits the same text once.
-    rec.emitResult(0, [{ isFinal: true, 0: { transcript: '你好世界' } }])
-    expect(setDraft).toHaveBeenLastCalledWith('hello 你好世界')
-    expect(setDraft).toHaveBeenCalledTimes(3)
   })
 
-  it('commits multiple final segments in order', () => {
-    const { setDraft } = renderButton()
-    fireEvent.click(screen.getByRole('button', { name: '语音输入' }))
-    const rec = FakeRecognition.instances[0]!
-
-    rec.emitResult(0, [{ isFinal: true, 0: { transcript: '第一句' } }])
-    // The real API's results array grows; resultIndex points at the new head.
-    rec.emitResult(1, [
-      { isFinal: true, 0: { transcript: '第一句' } },
-      { isFinal: true, 0: { transcript: '第二句' } },
-    ])
-    expect(setDraft).toHaveBeenLastCalledWith('hello 第一句 第二句')
-  })
-
-  it('returns to idle when recognition ends (click to stop)', () => {
+  it('stops monitoring when tapped again', () => {
     renderButton()
     const button = screen.getByRole('button', { name: '语音输入' })
-    fireEvent.click(button)
-    fireEvent.click(button)
-    const rec = FakeRecognition.instances[0]!
-    expect(rec.started).toBe(false)
+    fireEvent.pointerDown(button)
+    fireEvent.pointerUp(button)
+    expect(button.getAttribute('aria-pressed')).toBe('true')
+    // Tap again → stop.
+    fireEvent.pointerDown(button)
+    fireEvent.pointerUp(button)
     expect(button.getAttribute('aria-pressed')).toBe('false')
+    expect(FakeRecognition.instances[0]!.started).toBe(false)
   })
 
-  it('disables the button and surfaces the unsupported state when Web Speech is absent', () => {
-    delete (window as unknown as Record<string, unknown>).SpeechRecognition
-    const { setDraft } = renderButton()
-    const button = screen.getByRole('button', { name: '语音输入' })
-    fireEvent.click(button)
-    expect((button as HTMLButtonElement).disabled).toBe(true)
-    expect(FakeRecognition.instances).toHaveLength(0)
-    expect(setDraft).not.toHaveBeenCalled()
-  })
-
-  it('uses the configured language and recognition options', () => {
+  it('keeps monitoring when the pointer moves away', () => {
     renderButton()
-    fireEvent.click(screen.getByRole('button', { name: '语音输入' }))
+    const button = screen.getByRole('button', { name: '语音输入' })
+    fireEvent.pointerDown(button)
+    fireEvent.pointerUp(button)
+    expect(button.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.pointerLeave(button)
+    expect(button.getAttribute('aria-pressed')).toBe('true')
+    expect(FakeRecognition.instances[0]!.started).toBe(true)
+  })
+
+  it('keeps monitoring with a fresh recognizer when the draft is cleared by a send', () => {
+    const draftValue = { current: 'hello' }
+    const props = {
+      useInput: (selector: (s: { draft: string }) => string) => selector({ draft: draftValue.current }),
+      useSession: (selector: (s: { partial: unknown }) => unknown) => selector({ partial: null }),
+      inputActions: { setDraft: vi.fn(), submit: vi.fn() },
+      language: 'zh-CN',
+      interimResults: true,
+      t: (key: keyof typeof zh) => zh[key],
+    } as unknown as MicButtonProps
+    const view = render(<MicButton {...props} />)
+    const button = screen.getByRole('button', { name: '语音输入' })
+    fireEvent.pointerDown(button)
+    fireEvent.pointerUp(button)
+    expect(FakeRecognition.instances).toHaveLength(1)
+    expect(button.getAttribute('aria-pressed')).toBe('true')
+    // A send clears the draft externally → monitoring continues on a fresh recognizer.
+    draftValue.current = ''
+    view.rerender(<MicButton {...props} />)
+    expect(button.getAttribute('aria-pressed')).toBe('true')
+    expect(FakeRecognition.instances).toHaveLength(2)
+    expect(FakeRecognition.instances[1]!.started).toBe(true)
+  })
+
+  it('disables the button when Web Speech is absent', () => {
+    delete (window as unknown as Record<string, unknown>).SpeechRecognition
+    renderButton()
+    fireEvent.pointerDown(screen.getByRole('button', { name: '语音输入' }))
+    expect((screen.getByRole('button', { name: '语音输入' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+})
+
+describe('MicButton hold-to-chat', () => {
+  it('submits the transcript when released after a long hold', () => {
+    vi.useFakeTimers()
+    const { setDraft, submit } = renderButton()
+    const button = screen.getByRole('button', { name: '语音输入' })
+    fireEvent.pointerDown(button)
     const rec = FakeRecognition.instances[0]!
-    expect(rec.lang).toBe('zh-CN')
-    expect(rec.continuous).toBe(true)
-    expect(rec.interimResults).toBe(true)
+    expect(rec.started).toBe(true)
+    act(() => { vi.advanceTimersByTime(300) })
+    rec.emitResult(0, [{ isFinal: true, 0: { transcript: '帮我查天气' } }])
+    fireEvent.pointerUp(button)
+    expect(setDraft).toHaveBeenCalledWith('帮我查天气')
+    expect(submit).toHaveBeenCalled()
+  })
+
+  it('does not submit when a hold produced no speech', () => {
+    vi.useFakeTimers()
+    const { setDraft, submit } = renderButton()
+    const button = screen.getByRole('button', { name: '语音输入' })
+    fireEvent.pointerDown(button)
+    act(() => { vi.advanceTimersByTime(300) })
+    fireEvent.pointerUp(button)
+    expect(setDraft).not.toHaveBeenCalled()
+    expect(submit).not.toHaveBeenCalled()
   })
 })

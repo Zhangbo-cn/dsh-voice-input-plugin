@@ -2,7 +2,7 @@
  * Browser Web Speech recognition plumbing for the mic control. The browser
  * `SpeechRecognition`/`webkitSpeechRecognition` API is wrapped behind a
  * structural type so recognition flow is unit-testable in jsdom with a fake.
- * @module @zhangbo-cn/dsh-client-ui-voice-input/src/client/speech
+ * @module @deepseek-ai/dsh-client-ui-voice-input/src/client/speech
  */
 
 /** One recognition result entry (the minimal fields the mic control reads). */
@@ -99,5 +99,46 @@ export function applyResults(acc: TranscriptAccumulator, event: { readonly resul
     const text = result[0]?.transcript ?? ''
     if (result.isFinal) acc.appendFinal(text)
     else acc.setInterim(text)
+  }
+}
+
+/** The text-to-speech surface used by voice-chat mode. */
+export interface TtsSpeakerLike {
+  speak(text: string): void
+  stop(): void
+  readonly speaking: boolean
+  onend: (() => void) | null
+}
+
+/** Pick a natural (preferred) voice: Microsoft neural / Edge voices, else any Chinese voice. */
+export function pickPreferredVoice(): SpeechSynthesisVoice | undefined {
+  const voices = window.speechSynthesis?.getVoices?.() ?? []
+  if (voices.length === 0) return undefined
+  const natural = voices.find((v) => /natural/i.test(v.name) || v.name.includes('Online'))
+  if (natural !== undefined) return natural
+  return voices.find((v) => /zh/i.test(v.lang)) ?? voices[0]
+}
+
+/** A TTS speaker over `speechSynthesis`, preferring a natural (Edge/neural) voice. */
+export function createBrowserSpeaker(): TtsSpeakerLike {
+  const synth = window.speechSynthesis
+  const voice = pickPreferredVoice()
+  return {
+    get speaking() {
+      return synth.speaking
+    },
+    onend: null,
+    speak(text: string) {
+      if (text.trim().length === 0) return
+      synth.cancel()
+      const utterance = new SpeechSynthesisUtterance(text)
+      if (voice !== undefined) utterance.voice = voice
+      utterance.onend = () => this.onend?.()
+      utterance.onerror = () => this.onend?.()
+      synth.speak(utterance)
+    },
+    stop() {
+      synth.cancel()
+    },
   }
 }

@@ -14,9 +14,9 @@ describe('ui-voice-input client apply', () => {
   })
 
   it('resolves config defaults', () => {
-    expect(resolveMicConfig({})).toEqual({ language: 'zh-CN', continuous: true, interimResults: true })
-    expect(resolveMicConfig({ language: 'en-US', continuous: false })).toEqual({
-      language: 'en-US', continuous: false, interimResults: true,
+    expect(resolveMicConfig({})).toEqual({ language: 'zh-CN', interimResults: true })
+    expect(resolveMicConfig({ language: 'en-US', interimResults: false })).toEqual({
+      language: 'en-US', interimResults: false,
     })
   })
 
@@ -36,6 +36,6 @@ describe('ui-voice-input client apply', () => {
     const entry = entries[0]!
     expect(entry.component).toBe(MicButton)
     const injected = (entry.inject as unknown as (id: SessionId) => MicButtonInjected)(SID)
-    expect(injected).toEqual({ language: 'zh-CN', continuous: true, interimResults: true })
+    expect(injected).toEqual({ language: 'zh-CN', interimResults: true })
   })
 })

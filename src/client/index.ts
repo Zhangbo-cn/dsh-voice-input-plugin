@@ -2,7 +2,7 @@
  * Browser half of the voice-input plugin: registers the mic control into the
  * composer tool row (`conversation.input.left`). Recognition runs entirely in
  * the browser via the Web Speech API; no host round-trip.
- * @module @zhangbo-cn/dsh-client-ui-voice-input/src/client
+ * @module @deepseek-ai/dsh-client-ui-voice-input/src/client
  */
 
 import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
@@ -23,8 +23,6 @@ const NS = 'voice'
 export interface Config {
   /** Web Speech recognition language tag. Default `zh-CN`. */
   language?: string
-  /** Keep the recognizer running across pauses. Default true. */
-  continuous?: boolean
   /** Surface live (interim) transcript while speaking. Default true. */
   interimResults?: boolean
 }
@@ -36,7 +34,6 @@ export type MicButtonInjected = Required<Config>
 export function resolveMicConfig(config: Config = {}): MicButtonInjected {
   return {
     language: config.language ?? 'zh-CN',
-    continuous: config.continuous ?? true,
     interimResults: config.interimResults ?? true,
   }
 }

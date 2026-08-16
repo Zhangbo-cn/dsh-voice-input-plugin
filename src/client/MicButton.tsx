@@ -1,87 +1,235 @@
 /**
- * Composer mic control: toggles browser Web Speech recognition and appends the
- * transcript to the draft via the official `inputActions.setDraft` write path.
- * Interim results give live feedback; final segments commit; the base draft is
- * captured at start so recognition only ever appends, never rewrites user text.
- * @module @zhangbo-cn/dsh-client-ui-voice-input/src/client/MicButton
+ * The single composer voice control:
+ * - tap → toggle continuous monitoring: speech streams into the draft live
+ *   (逐字输入). Monitoring keeps listening across silences by auto-restarting
+ *   the recognizer on each segment end (Chrome's `continuous: true` fails to
+ *   deliver results, so each segment runs `continuous: false` and restarts).
+ * - press-and-hold → voice chat (record while held, release to send; the reply
+ *   is read aloud).
+ * Recognition starts on pointer-down (a user gesture, required by the Web
+ * Speech API); tap vs hold is decided on release.
+ * @module @deepseek-ai/dsh-client-ui-voice-input/src/client/MicButton
  */
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { applyResults, createBrowserRecognition, TranscriptAccumulator, type VoiceRecognitionLike } from './speech.ts'
+import { applyResults, createBrowserRecognition, createBrowserSpeaker, TranscriptAccumulator, type VoiceRecognitionLike } from './speech.ts'
 import type { MicButtonInjected } from './index.ts'
 
 export type MicButtonProps = PropsRuntime<'conversation.input.left'> & MicButtonInjected & PropsLocale<'voice'>
 
-/** The live mic-control state, mostly for accessibility and styling. */
 type MicState = 'idle' | 'listening' | 'unsupported'
 
+/** How long a press must be held before release counts as "hold to chat". */
+const HOLD_THRESHOLD = 250
+/** DeepSeek brand blue, used while the mic is listening. */
+const DEEPSEEK_BLUE = '#4d6bfe'
+
+/** Extract the assistant's visible text blocks from the streaming partial reply. */
+export function extractPartialText(partial: { blocks: readonly { kind: string; text?: string }[] } | null): string {
+  if (partial === null) return ''
+  return partial.blocks.filter((block) => block.kind === 'text').map((block) => block.text ?? '').join('')
+}
+
 /**
- * The mic button. `useInput`/`inputActions` come from the conversation
- * standard kit; `language`/`continuous`/`interimResults` come from the
+ * The mic control. `useInput`/`useSession`/`inputActions` come from the
+ * conversation standard kit; `language`/`interimResults` come from the
  * plugin's injected config face.
  */
-export function MicButton({ useInput, inputActions, t, language, continuous, interimResults }: MicButtonProps) {
+export function MicButton({ useInput, useSession, inputActions, t, language, interimResults }: MicButtonProps) {
   const draft = useInput((state) => state.draft)
-  const [state, setState] = useState<MicState>('idle')
+  const partial = useSession((state) => state.partial)
+  const [micState, setMicState] = useState<MicState>('idle')
   const recRef = useRef<VoiceRecognitionLike | null>(null)
+  const monitoringRef = useRef(false)
   const baseRef = useRef('')
   const accRef = useRef(new TranscriptAccumulator())
+  const holdTimerRef = useRef<number | null>(null)
+  const holdingRef = useRef(false)
+  const wasListeningRef = useRef(false)
+  const setByUsRef = useRef(false)
+  const lastDraftRef = useRef('')
+  const chatArmedRef = useRef(false)
+  const lastSpokenRef = useRef('')
 
-  const stop = (): void => {
-    // The last onresult already committed the final transcript to the draft;
-    // stopping only ends the live session.
-    recRef.current?.stop()
+  const speakReply = (text: string): void => {
+    const speaker = createBrowserSpeaker()
+    speaker.speak(text)
   }
 
-  const start = (): void => {
-    const rec = createBrowserRecognition()
-    if (rec === null) {
-      setState('unsupported')
-      return
+  // When the draft changes externally (a send cleared it, or the user typed):
+  // reset the append base + transcript, and — on a send — restart the
+  // recognizer so it cannot re-emit the old transcript. Monitoring itself
+  // continues (the user can keep talking after sending).
+  useEffect(() => {
+    if (draft === lastDraftRef.current) return
+    if (!setByUsRef.current) {
+      baseRef.current = draft
+      accRef.current.reset()
+      if (monitoringRef.current) restartRecognizer()
     }
-    const acc = new TranscriptAccumulator()
-    accRef.current = acc
-    baseRef.current = draft
+    lastDraftRef.current = draft
+    setByUsRef.current = false
+  }, [draft])
+
+  // In chat mode, speak the assistant's reply as it streams.
+  useEffect(() => {
+    if (!chatArmedRef.current) return
+    const text = extractPartialText(partial)
+    if (text.length > 0 && text !== lastSpokenRef.current) {
+      lastSpokenRef.current = text
+      speakReply(text)
+    }
+  }, [partial])
+
+  /**
+   * Start one recognition segment (continuous false — the reliable mode that
+   * actually delivers interim results). On segment end, auto-restart while
+   * monitoring stays on, so listening is continuous across silences.
+   */
+  const startRecognizer = (): void => {
+    const rec = createBrowserRecognition()
+    if (rec === null) { setMicState('unsupported'); return }
+    const acc = accRef.current
     rec.lang = language
-    rec.continuous = continuous
+    rec.continuous = false
     rec.interimResults = interimResults
     rec.onresult = (event) => {
       applyResults(acc, event)
-      // Replace the whole appended transcript each event so interim updates
-      // never duplicate; the base draft is untouched.
+      setByUsRef.current = true
       inputActions.setDraft([baseRef.current, acc.transcript].filter((part) => part.length > 0).join(' '))
     }
     rec.onend = () => {
       recRef.current = null
-      setState('idle')
+      if (monitoringRef.current) startRecognizer() // keep monitoring across silences
+      else setMicState('idle')
     }
     rec.onerror = (event) => {
-      setState(event.error === 'not-allowed' || event.error === 'service-not-allowed' ? 'unsupported' : 'idle')
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') setMicState('unsupported')
+      else if (monitoringRef.current) startRecognizer()
     }
     rec.start()
     recRef.current = rec
-    setState('listening')
+    setMicState('listening')
   }
 
-  const toggle = (): void => {
-    if (state === 'listening') stop()
-    else start()
+  /** Enter monitoring: fresh transcript base, then keep the recognizer running. */
+  const beginMonitoring = (): void => {
+    monitoringRef.current = true
+    accRef.current = new TranscriptAccumulator()
+    baseRef.current = draft
+    lastDraftRef.current = draft
+    startRecognizer()
   }
 
-  const listening = state === 'listening'
+  const stopMonitoring = (): void => {
+    monitoringRef.current = false
+    const rec = recRef.current
+    recRef.current = null
+    rec?.stop()
+  }
+
+  /**
+   * Stop the current recognizer and start a fresh one. Suppresses the old
+   * recognizer's handlers so its `onend` cannot double-start, and drops any
+   * stale transcript the old session might still emit.
+   */
+  const restartRecognizer = (): void => {
+    const old = recRef.current
+    if (old !== null) {
+      recRef.current = null
+      old.onend = () => {}
+      old.onerror = () => {}
+      old.stop()
+    }
+    startRecognizer()
+  }
+
+  /** Hold released → submit the transcript as a message (voice chat). */
+  const submitChat = (): void => {
+    monitoringRef.current = false
+    chatArmedRef.current = true
+    lastSpokenRef.current = ''
+    const rec = recRef.current
+    recRef.current = null
+    rec?.stop()
+    const text = accRef.current.transcript
+    setMicState('idle')
+    if (text.length > 0) {
+      inputActions.setDraft(text)
+      inputActions.submit()
+    }
+  }
+
+  const onPointerDown = (): void => {
+    if (micState === 'unsupported') return
+    wasListeningRef.current = micState === 'listening'
+    holdingRef.current = false
+    if (!wasListeningRef.current) {
+      beginMonitoring()
+      holdTimerRef.current = window.setTimeout(() => { holdingRef.current = true }, HOLD_THRESHOLD)
+    }
+  }
+
+  const onPointerUp = (): void => {
+    if (holdTimerRef.current !== null) { clearTimeout(holdTimerRef.current); holdTimerRef.current = null }
+    if (wasListeningRef.current) {
+      stopMonitoring() // tap again → stop monitoring
+    } else if (holdingRef.current) {
+      holdingRef.current = false
+      submitChat()
+    }
+    // A quick tap on idle keeps monitoring (toggle on).
+  }
+
+  const onPointerLeave = (): void => {
+    // Only a hold-drag-away submits; a pointer drift during monitoring must
+    // not stop the recognizer (the user may move the mouse while talking).
+    if (holdingRef.current) {
+      holdingRef.current = false
+      submitChat()
+    }
+  }
+
+  const listening = micState === 'listening'
   return (
-    <button
-      type="button"
-      className="dsh-voice-input"
-      onClick={toggle}
-      aria-pressed={listening}
-      aria-label={t('mic.label')}
-      title={listening ? t('mic.title.listening') : t('mic.title')}
-      disabled={state === 'unsupported'}
-    >
-      <span aria-hidden>{listening ? '🔴' : '🎤'}</span>
-    </button>
+    <span className="dsh-voice-control">
+      <button
+        type="button"
+        className="dsh-voice-input"
+        onPointerDown={onPointerDown}
+        onPointerUp={onPointerUp}
+        onPointerLeave={onPointerLeave}
+        aria-pressed={listening}
+        aria-label={t('mic.label')}
+        title={listening ? t('mic.title.listening') : t('mic.title')}
+        disabled={micState === 'unsupported'}
+      >
+        <MicIcon listening={listening} />
+      </button>
+    </span>
+  )
+}
+
+/** A minimal linear (outline) mic icon; turns DeepSeek blue and pulses while listening. */
+function MicIcon({ listening }: { listening: boolean }): React.ReactElement {
+  return (
+    <span className="dsh-voice-icon" aria-hidden="true">
+      <style>
+        {`@keyframes dsh-mic-pulse{0%,100%{opacity:1}50%{opacity:.45}}`
+        + `.dsh-voice-input{border:none;background:transparent;padding:2px;cursor:pointer;display:inline-flex;align-items:center;line-height:0;color:inherit}`
+        + `.dsh-voice-input:hover{opacity:.8}`
+        + `.dsh-voice-icon{display:inline-flex;width:14px;height:14px;color:${listening ? DEEPSEEK_BLUE : 'currentColor'}}`
+        + `.dsh-voice-icon svg{width:100%;height:100%}`
+        + `.dsh-voice-input[aria-pressed="true"] .dsh-voice-icon{animation:dsh-mic-pulse 1s ease-in-out infinite}}`}
+      </style>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+        <line x1="12" y1="19" x2="12" y2="23" />
+        <line x1="8" y1="23" x2="16" y2="23" />
+      </svg>
+    </span>
   )
 }
