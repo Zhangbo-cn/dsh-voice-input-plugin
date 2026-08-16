@@ -39,7 +39,9 @@ export function extractPartialText(partial: { blocks: readonly { kind: string; t
  */
 export function MicButton({ useInput, useSession, inputActions, t, language, interimResults }: MicButtonProps) {
   const draft = useInput((state) => state.draft)
-  const partial = useSession((state) => state.partial)
+  const chatNodes = useSession((state) => state.chat.legacy.nodes)
+  const chatNodesRef = useRef(chatNodes)
+  chatNodesRef.current = chatNodes
   const [micState, setMicState] = useState<MicState>('idle')
   const recRef = useRef<VoiceRecognitionLike | null>(null)
   const monitoringRef = useRef(false)
@@ -51,7 +53,7 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
   const setByUsRef = useRef(false)
   const lastDraftRef = useRef('')
   const chatArmedRef = useRef(false)
-  const lastSpokenRef = useRef('')
+  const replySeqRef = useRef(-1)
 
   const speakReply = (text: string): void => {
     const speaker = createBrowserSpeaker()
@@ -73,15 +75,24 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
     setByUsRef.current = false
   }, [draft])
 
-  // In chat mode, speak the assistant's reply as it streams.
+  // Voice chat: after a hold-submit, speak the NEXT finalized assistant
+  // message (read from the durable chat history, not the streaming partial —
+  // a fast reply can finalize before partial is observed). Speak exactly once.
   useEffect(() => {
     if (!chatArmedRef.current) return
-    const text = extractPartialText(partial)
-    if (text.length > 0 && text !== lastSpokenRef.current) {
-      lastSpokenRef.current = text
-      speakReply(text)
+    for (let i = chatNodes.length - 1; i >= 0; i--) {
+      const node = chatNodes[i]!
+      if (node.kind === 'assistant' && node.seq > replySeqRef.current) {
+        const text = extractPartialText(node)
+        if (text.length > 0) {
+          replySeqRef.current = node.seq
+          chatArmedRef.current = false
+          speakReply(text)
+        }
+        break
+      }
     }
-  }, [partial])
+  }, [chatNodes])
 
   /**
    * Start one recognition segment (continuous false — the reliable mode that
@@ -149,8 +160,13 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
   /** Hold released → submit the transcript as a message (voice chat). */
   const submitChat = (): void => {
     monitoringRef.current = false
+    // Baseline: only speak the assistant reply that arrives AFTER this submit.
+    const maxSeq = chatNodesRef.current.reduce(
+      (max, node) => node.kind === 'assistant' ? Math.max(max, node.seq) : max,
+      -1,
+    )
+    replySeqRef.current = maxSeq
     chatArmedRef.current = true
-    lastSpokenRef.current = ''
     const rec = recRef.current
     recRef.current = null
     rec?.stop()

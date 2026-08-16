@@ -46,7 +46,8 @@ function renderButton(): { setDraft: ReturnType<typeof vi.fn>; submit: ReturnTyp
   const submit = vi.fn()
   const props = {
     useInput: (selector: (s: { draft: string }) => string) => selector({ draft: 'hello' }),
-    useSession: (selector: (s: { partial: unknown }) => unknown) => selector({ partial: null }),
+    useSession: (selector: (s: { chat: { legacy: { nodes: unknown[] } } }) => unknown) =>
+      selector({ chat: { legacy: { nodes: [] } } }),
     inputActions: { setDraft, submit },
     language: 'zh-CN',
     interimResults: true,
@@ -121,7 +122,8 @@ describe('MicButton tap toggles continuous monitoring', () => {
     const draftValue = { current: 'hello' }
     const props = {
       useInput: (selector: (s: { draft: string }) => string) => selector({ draft: draftValue.current }),
-      useSession: (selector: (s: { partial: unknown }) => unknown) => selector({ partial: null }),
+      useSession: (selector: (s: { chat: { legacy: { nodes: unknown[] } } }) => unknown) =>
+        selector({ chat: { legacy: { nodes: [] } } }),
       inputActions: { setDraft: vi.fn(), submit: vi.fn() },
       language: 'zh-CN',
       interimResults: true,
@@ -146,6 +148,45 @@ describe('MicButton tap toggles continuous monitoring', () => {
     renderButton()
     fireEvent.pointerDown(screen.getByRole('button', { name: '语音输入' }))
     expect((screen.getByRole('button', { name: '语音输入' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+})
+
+describe('MicButton voice-chat reply speaking', () => {
+  it('speaks the finalized assistant reply once after a hold-submit', () => {
+    const speak = vi.fn()
+    ;(window as unknown as Record<string, unknown>).speechSynthesis = { speak, cancel: vi.fn(), getVoices: () => [], speaking: false }
+    ;(window as unknown as Record<string, unknown>).SpeechSynthesisUtterance = class { text: string; voice?: unknown; onend?: () => void; onerror?: () => void }
+    const nodes = { current: [] as { kind: string; seq: number; blocks: { kind: string; text: string }[] }[] }
+    const setDraft = vi.fn()
+    const submit = vi.fn()
+    const props = {
+      useInput: (selector: (s: { draft: string }) => string) => selector({ draft: 'hello' }),
+      useSession: (selector: (s: { chat: { legacy: { nodes: typeof nodes.current } } }) => unknown) =>
+        selector({ chat: { legacy: { nodes: nodes.current } } }),
+      inputActions: { setDraft, submit },
+      language: 'zh-CN',
+      interimResults: true,
+      t: (key: keyof typeof zh) => zh[key],
+    } as unknown as MicButtonProps
+    const view = render(<MicButton {...props} />)
+    vi.useFakeTimers()
+    fireEvent.pointerDown(screen.getByRole('button', { name: '语音输入' }))
+    act(() => { vi.advanceTimersByTime(300) })
+    const rec = FakeRecognition.instances[0]!
+    rec.emitResult(0, [{ isFinal: true, 0: { transcript: '帮我查天气' } }])
+    fireEvent.pointerUp(screen.getByRole('button', { name: '语音输入' }))
+    expect(submit).toHaveBeenCalled()
+    expect(speak).not.toHaveBeenCalled()
+
+    // The assistant reply finalizes → a new assistant node appears → spoken once.
+    nodes.current = [{ kind: 'assistant', seq: 5, blocks: [{ kind: 'text', text: '这是一段回复' }] }]
+    view.rerender(<MicButton {...props} />)
+    expect(speak).toHaveBeenCalledTimes(1)
+
+    // A later reply is NOT spoken (only the reply to the held message, once).
+    nodes.current = [...nodes.current, { kind: 'assistant', seq: 6, blocks: [{ kind: 'text', text: '又一段' }] }]
+    view.rerender(<MicButton {...props} />)
+    expect(speak).toHaveBeenCalledTimes(1)
   })
 })
 
