@@ -39,7 +39,8 @@
     }
   },
   "scripts": {
-    "bundle": "tsdown"
+    "bundle": "tsdown",
+    "check": "node --check lib/index.js && node --check lib/invariant.js && node --check lib/client.js"
   },
   "files": [
     "lib/index.js",

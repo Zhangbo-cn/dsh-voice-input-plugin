@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The plugin's peerDependencies reference @deepseek-ai/dsh packages that
+      # are built from the DeepSeek Harness monorepo; the committed lib/ is the
+      # publishable artifact, so CI validates it directly instead of an npm
+      # install (which cannot resolve those monorepo-only peers).
+      - name: Syntax-check the committed build
+        run: npm run check
+      - name: Validate the publishable package contents
+        run: npm pack --dry-run
+      - name: Whitespace check
+        run: git diff --check
