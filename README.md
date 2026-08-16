@@ -21,6 +21,8 @@ The package is a `dsh.bundle` installable, published on npm as [`@zhangbo-cn/dsh
 dsh plugin add @zhangbo-cn/dsh-client-ui-voice-input
 ```
 
+> **0.1.1+ required.** `0.1.0` registered the browser bundle under the wrong ModuleLoader id (`@deepseek-ai/...`), so Harness failed with `loaded without registering "@zhangbo-cn/dsh-client-ui-voice-input"`. Upgrade / reinstall, then hard-refresh the Web UI.
+
 (It also installs from the GitHub repo via `dsh plugin add github:Zhangbo-cn/dsh-voice-input-plugin`.)
 
 If you develop from a [DeepSeek Harness checkout](https://github.com/deepseek-ai/deepseek-harness), you can mount it directly in the web-app browser roster (`packages/bundle/web-app/cordis.patch.yml`):
