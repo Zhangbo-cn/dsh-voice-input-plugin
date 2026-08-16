@@ -119,7 +119,13 @@ export function pickPreferredVoice(): SpeechSynthesisVoice | undefined {
   return voices.find((v) => /zh/i.test(v.lang)) ?? voices[0]
 }
 
-/** A TTS speaker over `speechSynthesis`, preferring a natural (Edge/neural) voice. */
+/**
+ * A TTS speaker over `speechSynthesis`, preferring a natural (Edge/neural)
+ * voice. NOTE: browser `speechSynthesis` is best-effort — Chrome silently
+ * drops `speak()` calls after ~15s of speech inactivity, so we `resume()`
+ * (and cancel) before every utterance as the known workaround. Quality and
+ * reliability are browser-vendor dependent.
+ */
 export function createBrowserSpeaker(): TtsSpeakerLike {
   const synth = window.speechSynthesis
   const voice = pickPreferredVoice()
@@ -130,9 +136,14 @@ export function createBrowserSpeaker(): TtsSpeakerLike {
     onend: null,
     speak(text: string) {
       if (text.trim().length === 0) return
+      // Chrome's dead-zone bug: after a quiet gap, speak() is silently ignored
+      // unless resume() re-activates the engine.
       synth.cancel()
+      synth.resume()
       const utterance = new SpeechSynthesisUtterance(text)
       if (voice !== undefined) utterance.voice = voice
+      utterance.rate = 1
+      utterance.pitch = 1
       utterance.onend = () => this.onend?.()
       utterance.onerror = () => this.onend?.()
       synth.speak(utterance)
