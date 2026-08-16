@@ -154,7 +154,7 @@ describe('MicButton tap toggles continuous monitoring', () => {
 describe('MicButton voice-chat reply speaking', () => {
   it('speaks the finalized assistant reply once after a hold-submit', () => {
     const speak = vi.fn()
-    ;(window as unknown as Record<string, unknown>).speechSynthesis = { speak, cancel: vi.fn(), getVoices: () => [], speaking: false }
+    ;(window as unknown as Record<string, unknown>).speechSynthesis = { speak, cancel: vi.fn(), resume: vi.fn(), getVoices: () => [], speaking: false }
     ;(window as unknown as Record<string, unknown>).SpeechSynthesisUtterance = class { text: string; voice?: unknown; onend?: () => void; onerror?: () => void }
     const nodes = { current: [] as { kind: string; seq: number; blocks: { kind: string; text: string }[] }[] }
     const setDraft = vi.fn()
