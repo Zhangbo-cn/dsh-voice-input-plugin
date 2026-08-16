@@ -1,13 +1,13 @@
 # dsh-client-ui-voice-input
 
-Composer **voice control** for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a minimal linear mic button in the composer tool row that turns your speech into text — with a **tap-to-monitor** mode (continuous, live 逐字 streaming, send-anytime) and a **hold-to-talk** voice-chat mode (release to send, reply read aloud). Zero backend, zero API key — recognition and TTS run entirely in the browser via the Web Speech API.
+Composer **voice control** for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): a minimal linear mic button in the composer tool row that turns your speech into text — with a **tap-to-monitor** mode (continuous, live 逐字 streaming, send-anytime) and a **hold-to-talk** voice-chat mode (release to send, reply read aloud). Zero API key: recognition runs in the browser via the Web Speech API; reply reading uses the host's Edge TTS (`/api/tts`) with a browser `speechSynthesis` fallback.
 
 `dsh-plugin` · TypeScript · React
 
 ## Features
 
 - **Tap to monitor**: click the mic, speak — text streams into the draft live (逐字输入), the mic keeps listening even in silence, and you can send or keep adding speech anytime. Tap again to stop.
-- **Hold to talk**: press-and-hold to record a voice-chat message, release to send it; the assistant's reply is read aloud (browser TTS, preferring natural/Edge neural voices).
+- **Hold to talk**: press-and-hold to record a voice-chat message, release to send it; the assistant's reply is read aloud — host Edge neural TTS (`/api/tts`) first, browser `speechSynthesis` as fallback.
 - **Continuous across silences**: each recognition segment auto-restarts so monitoring never drops.
 - **Respects the composer**: speech appends to the draft (base preserved); a send clears the draft cleanly without re-filling old text; monitoring continues after a send on a fresh recognizer.
 - **DeepSeek-blue listening state**: the icon pulses in DeepSeek brand blue while listening; borderless linear icon, no clutter.
@@ -21,6 +21,15 @@ Add the package to your DSH web composition. If you develop from a [DeepSeek Har
 - id: ui-voice-input
   name: '@zhangbo-cn/dsh-client-ui-voice-input'
 ```
+
+For **reliable reply reading**, also mount the host Edge TTS capability (`@deepseek-ai/dsh-tts-edge`), which registers `/api/tts`:
+
+```yaml
+- id: tts-edge
+  name: '@deepseek-ai/dsh-tts-edge'
+```
+
+Without it, reply reading still works but falls back to the browser's `speechSynthesis` (less natural, occasionally silent on Chrome after an idle gap).
 
 Then build the client bundle with the repo's tsdown preset:
 
@@ -66,7 +75,9 @@ MicButton (conversation.input.left)
   │     → tap again → stop
   └─ hold → submitChat()
         → on release: stop + inputActions.setDraft(text) + inputActions.submit()
-        → reply → createBrowserSpeaker() → speechSynthesis (prefers natural voice)
+        → reply → createReplySpeaker()
+              → fetch /api/tts (host Edge neural MP3) → <audio>.play()
+              → fallback: browser speechSynthesis
 ```
 
 - Recognition starts on pointer-down (a user gesture — required by the Web Speech API); tap vs hold is decided on release.
@@ -75,21 +86,21 @@ MicButton (conversation.input.left)
 
 ## Compatibility
 
-| Browser | Mic (input, SpeechRecognition) | Reply playback (speechSynthesis) |
-|---------|--------------------------------|----------------------------------|
-| Chrome / Edge (Windows) | ✅ Web Speech | ✅ natural (Google / Edge neural) voices |
-| Safari | ✅ webkitSpeechRecognition (re-trigger on each gesture) | ✅ natural OS voices |
-| Firefox | ⚠️ **not supported — browser limitation** (Mozilla has not shipped `SpeechRecognition`; local on-device recognition is still early-stage) | ⚠️ `speechSynthesis` **is supported** (reply can be read aloud), but voices are OS-default / less natural |
+| Browser | Mic (input, SpeechRecognition) | Reply playback (host `/api/tts`, fallback `speechSynthesis`) |
+|---------|--------------------------------|--------------------------------------------------------------|
+| Chrome / Edge (Windows) | ✅ Web Speech | ✅ host Edge neural MP3; browser `speechSynthesis` fallback |
+| Safari | ✅ webkitSpeechRecognition (re-trigger on each gesture) | ✅ host Edge neural MP3 (playable); browser fallback works |
+| Firefox | ⚠️ **not supported — browser limitation** (Mozilla has not shipped `SpeechRecognition`; local on-device recognition is still early-stage) | ✅ host Edge neural MP3 (playable); `speechSynthesis` fallback supported but less natural |
 
 Notes:
 - **Firefox mic input**: this is a genuine browser limitation, not a plugin issue. The plugin feature-detects and disables the mic with a "not supported in this browser" hint. A cross-browser fallback would need `MediaRecorder` + an external transcription service (out of scope for a zero-backend plugin).
-- **Reply playback**: `speechSynthesis` works in Firefox; only the voice quality differs (it falls back to the OS default voice rather than a natural neural voice).
-- Requires a microphone and a browser with `speechSynthesis` for reply playback.
+- **Reply playback**: the preferred path is the host's `/api/tts` (Microsoft Edge neural voices, synthesized server-side) — reliable and natural on every browser that can play MP3. Without the `tts-edge` host plugin, the client falls back to `speechSynthesis` (Chrome may silently drop `speak()` after an idle gap; voices are OS-default).
+- Mic input requires a browser with Web Speech; reply playback requires either the `tts-edge` host plugin or a browser with `speechSynthesis`.
 
 ## Tests
 
 ```sh
-npx vitest run   # 19 tests: tap monitoring, hold submit, auto-restart, send-clear, chat controller
+npx vitest run   # 21 tests: tap monitoring, hold submit, auto-restart, send-clear, host/browser reply reading
 ```
 
 ## License

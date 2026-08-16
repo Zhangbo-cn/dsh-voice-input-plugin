@@ -152,13 +152,17 @@ describe('MicButton tap toggles continuous monitoring', () => {
 })
 
 describe('MicButton voice-chat reply speaking', () => {
-  it('speaks the finalized assistant reply once after a hold-submit', () => {
-    const speak = vi.fn()
-    ;(window as unknown as Record<string, unknown>).speechSynthesis = { speak, cancel: vi.fn(), resume: vi.fn(), getVoices: () => [], speaking: false }
-    ;(window as unknown as Record<string, unknown>).SpeechSynthesisUtterance = class { text: string; voice?: unknown; onend?: () => void; onerror?: () => void }
-    const nodes = { current: [] as { kind: string; seq: number; blocks: { kind: string; text: string }[] }[] }
+  /** Neutralize jsdom's unimplemented media/object-URL APIs so the host TTS path runs. */
+  function stubMedia(): void {
+    Object.defineProperty(HTMLMediaElement.prototype, 'play', { value: vi.fn().mockResolvedValue(undefined), configurable: true })
+    Object.defineProperty(HTMLMediaElement.prototype, 'pause', { value: vi.fn(), configurable: true })
+    Object.defineProperty(URL, 'createObjectURL', { value: vi.fn(() => 'blob:fake'), configurable: true })
+    Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), configurable: true })
+  }
+
+  /** A full hold-to-chat run; returns the render view and mutable session nodes. */
+  function holdAndSubmit(nodes: { current: { kind: string; seq: number; blocks: { kind: string; text: string }[] }[] }, submit: ReturnType<typeof vi.fn>): ReturnType<typeof render> {
     const setDraft = vi.fn()
-    const submit = vi.fn()
     const props = {
       useInput: (selector: (s: { draft: string }) => string) => selector({ draft: 'hello' }),
       useSession: (selector: (s: { chat: { legacy: { nodes: typeof nodes.current } } }) => unknown) =>
@@ -176,19 +180,71 @@ describe('MicButton voice-chat reply speaking', () => {
     rec.emitResult(0, [{ isFinal: true, 0: { transcript: '帮我查天气' } }])
     fireEvent.pointerUp(screen.getByRole('button', { name: '语音输入' }))
     expect(submit).toHaveBeenCalled()
-    expect(speak).not.toHaveBeenCalled()
+    return view
+  }
+
+  it('reads the finalized reply once via the host /api/tts route after a hold-submit', () => {
+    stubMedia()
+    const fetchMock = vi.fn(async () => new Response('audio-data', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const nodes = { current: [] as { kind: string; seq: number; blocks: { kind: string; text: string }[] }[] }
+    const submit = vi.fn()
+    const view = holdAndSubmit(nodes, submit)
+    expect(fetchMock).not.toHaveBeenCalled()
 
     // The assistant reply finalizes → a new assistant node appears → spoken once.
     nodes.current = [{ kind: 'assistant', seq: 5, blocks: [{ kind: 'text', text: '这是一段回复' }] }]
-    view.rerender(<MicButton {...props} />)
-    expect(speak).toHaveBeenCalledTimes(1)
+    view.rerender(<MicButton {...holdAndSubmitProps(nodes, submit)} />)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const calledUrl = fetchMock.mock.calls[0]![0] as string
+    expect(calledUrl).toMatch(/^\/api\/tts\?text=/)
+    expect(decodeURIComponent(calledUrl)).toContain('这是一段回复')
 
-    // A later reply is NOT spoken (only the reply to the held message, once).
+    // A later reply is NOT read (only the reply to the held message, once).
     nodes.current = [...nodes.current, { kind: 'assistant', seq: 6, blocks: [{ kind: 'text', text: '又一段' }] }]
-    view.rerender(<MicButton {...props} />)
+    view.rerender(<MicButton {...holdAndSubmitProps(nodes, submit)} />)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to browser speechSynthesis when the host TTS route is unreachable', async () => {
+    stubMedia()
+    const speak = vi.fn()
+    ;(window as unknown as Record<string, unknown>).speechSynthesis = { speak, cancel: vi.fn(), resume: vi.fn(), getVoices: () => [], speaking: false }
+    ;(window as unknown as Record<string, unknown>).SpeechSynthesisUtterance = class {
+      text: string
+      voice?: unknown
+      onend?: () => void
+      onerror?: () => void
+      constructor(text: string) { this.text = text }
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('host unreachable') }))
+    const nodes = { current: [] as { kind: string; seq: number; blocks: { kind: string; text: string }[] }[] }
+    const submit = vi.fn()
+    const view = holdAndSubmit(nodes, submit)
+
+    nodes.current = [{ kind: 'assistant', seq: 5, blocks: [{ kind: 'text', text: '这是一段回复' }] }]
+    await act(async () => { view.rerender(<MicButton {...holdAndSubmitProps(nodes, submit)} />) })
     expect(speak).toHaveBeenCalledTimes(1)
+    const utterance = speak.mock.calls[0]![0] as { text: string }
+    expect(utterance.text).toBe('这是一段回复')
   })
 })
+
+/** Build the MicButton props for a rerender; keeps the render() helper single-use. */
+function holdAndSubmitProps(
+  nodes: { current: { kind: string; seq: number; blocks: { kind: string; text: string }[] }[] },
+  submit: ReturnType<typeof vi.fn>,
+): MicButtonProps {
+  return {
+    useInput: (selector: (s: { draft: string }) => string) => selector({ draft: 'hello' }),
+    useSession: (selector: (s: { chat: { legacy: { nodes: typeof nodes.current } } }) => unknown) =>
+      selector({ chat: { legacy: { nodes: nodes.current } } }),
+    inputActions: { setDraft: vi.fn(), submit },
+    language: 'zh-CN',
+    interimResults: true,
+    t: (key: keyof typeof zh) => zh[key],
+  } as unknown as MicButtonProps
+}
 
 describe('MicButton hold-to-chat', () => {
   it('submits the transcript when released after a long hold', () => {

@@ -153,3 +153,56 @@ export function createBrowserSpeaker(): TtsSpeakerLike {
     },
   }
 }
+
+/** A fetch signature the host TTS speaker can be handed in tests. */
+export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
+
+/**
+ * A TTS speaker preferring the host `/api/tts` route — Edge neural voices
+ * synthesized server-side and served as MP3 — and falling back to the browser
+ * `speechSynthesis` when the route is unreachable or fails. The browser
+ * fallback keeps reply reading alive against a host without the tts-edge
+ * capability, at the cost of the browser's less reliable voices.
+ */
+export function createReplySpeaker(fetchImpl: FetchLike = globalThis.fetch.bind(globalThis)): TtsSpeakerLike {
+  const audio = new Audio()
+  let browser: TtsSpeakerLike | undefined
+  let speaking = false
+
+  const speaker: TtsSpeakerLike = {
+    get speaking() {
+      return speaking
+    },
+    onend: null,
+    speak(text: string) {
+      if (text.trim().length === 0) return
+      audio.pause()
+      browser?.stop()
+      speaking = true
+      void fetchImpl(`/api/tts?text=${encodeURIComponent(text)}`)
+        .then((response) => {
+          if (!response.ok) throw new Error(`host TTS responded ${response.status}`)
+          return response.blob()
+        })
+        .then((blob) => {
+          const url = URL.createObjectURL(blob)
+          audio.src = url
+          audio.onended = () => { speaking = false; speaker.onend?.() }
+          audio.onerror = () => { speaking = false; URL.revokeObjectURL(url) }
+          return audio.play()
+        })
+        .catch(() => {
+          const fallback = createBrowserSpeaker()
+          fallback.onend = () => { speaking = false; speaker.onend?.() }
+          browser = fallback
+          fallback.speak(text)
+        })
+    },
+    stop() {
+      audio.pause()
+      browser?.stop()
+      speaking = false
+    },
+  }
+  return speaker
+}

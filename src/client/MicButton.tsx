@@ -14,7 +14,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { applyResults, createBrowserRecognition, createBrowserSpeaker, TranscriptAccumulator, type VoiceRecognitionLike } from './speech.ts'
+import { applyResults, createBrowserRecognition, createReplySpeaker, TranscriptAccumulator, type TtsSpeakerLike, type VoiceRecognitionLike } from './speech.ts'
 import type { MicButtonInjected } from './index.ts'
 
 export type MicButtonProps = PropsRuntime<'conversation.input.left'> & MicButtonInjected & PropsLocale<'voice'>
@@ -54,10 +54,11 @@ export function MicButton({ useInput, useSession, inputActions, t, language, int
   const lastDraftRef = useRef('')
   const chatArmedRef = useRef(false)
   const replySeqRef = useRef(-1)
+  const speakerRef = useRef<TtsSpeakerLike | null>(null)
+  if (speakerRef.current === null) speakerRef.current = createReplySpeaker()
 
   const speakReply = (text: string): void => {
-    const speaker = createBrowserSpeaker()
-    speaker.speak(text)
+    speakerRef.current?.speak(text)
   }
 
   // When the draft changes externally (a send cleared it, or the user typed):
