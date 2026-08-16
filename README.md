@@ -15,7 +15,15 @@ Composer **voice control** for [DeepSeek Harness](https://github.com/deepseek-ai
 
 ## Install
 
-Add the package to your DSH web composition. If you develop from a [DeepSeek Harness checkout](https://github.com/deepseek-ai/deepseek-harness), mount it in the web-app browser roster (`packages/bundle/web-app/cordis.patch.yml`):
+The package is a `dsh.bundle` installable, published on npm as [`@zhangbo-cn/dsh-client-ui-voice-input`](https://www.npmjs.com/package/@zhangbo-cn/dsh-client-ui-voice-input). One command:
+
+```sh
+dsh plugin add @zhangbo-cn/dsh-client-ui-voice-input
+```
+
+(It also installs from the GitHub repo via `dsh plugin add github:Zhangbo-cn/dsh-voice-input-plugin`.)
+
+If you develop from a [DeepSeek Harness checkout](https://github.com/deepseek-ai/deepseek-harness), you can mount it directly in the web-app browser roster (`packages/bundle/web-app/cordis.patch.yml`):
 
 ```yaml
 - id: ui-voice-input
