@@ -1,6 +1,6 @@
 {
   "name": "@zhangbo-cn/dsh-client-ui-voice-input",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Composer mic for DeepSeek Harness Web: tap-to-monitor live transcription and hold-to-talk, with host Edge TTS reply reading that streams while the model generates, echo-pause during reading, and tap-to-stop.",
   "repository": {
     "type": "git",

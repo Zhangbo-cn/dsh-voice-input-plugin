@@ -1,13 +1,13 @@
 /**
- * Package-owned invariant companion for `@deepseek-ai/dsh-client-ui-voice-input`.
- * @module @deepseek-ai/dsh-client-ui-voice-input/invariant
+ * Package-owned invariant companion for `@zhangbo-cn/dsh-client-ui-voice-input`.
+ * @module @zhangbo-cn/dsh-client-ui-voice-input/invariant
  */
 
 /* jscpd:ignore-start */
 import type { Context } from '@deepseek-ai/cordis'
 import type { InvariantInstaller } from '@deepseek-ai/dsh-invariants'
 
-const PACKAGE_NAME = '@deepseek-ai/dsh-client-ui-voice-input'
+const PACKAGE_NAME = '@zhangbo-cn/dsh-client-ui-voice-input'
 
 /** Cordis companion plugin name. */
 export const name = 'ui-voice-input-invariant'
