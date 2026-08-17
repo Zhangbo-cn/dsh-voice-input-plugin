@@ -158,6 +158,31 @@ export function createBrowserSpeaker(): TtsSpeakerLike {
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 
 /**
+ * Strip markdown markup that must not be read aloud: bold/italic/strike spans,
+ * inline and fenced code, links/images (keep the label), headers, list bullets,
+ * blockquote markers, and HTML entities. Whitespace is collapsed to single
+ * spaces so leftover syntax does not produce pauses mid-utterance.
+ */
+export function stripMarkdownForSpeech(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/_([^_]+)_/g, '$1')
+    .replace(/~~([^~]+)~~/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*>\s?/gm, '')
+    .replace(/&(amp|lt|gt|quot|#39);/g, (m) => ({ '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'" })[m] ?? m)
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
  * Shared Web Audio context. Resumed inside the mic gesture so reply playback
  * through it is exempt from the browser autoplay policy (a plain
  * `HTMLMediaElement.play()` is blocked when it runs after the gesture window).
@@ -262,10 +287,11 @@ export function createReplySpeaker(fetchImpl: FetchLike = globalThis.fetch.bind(
       onEnd = callback
     },
     speak(text: string) {
-      if (text.trim().length === 0) return
+      const clean = stripMarkdownForSpeech(text)
+      if (clean.trim().length === 0) return
       stopAll()
       speaking = true
-      void fetchImpl(`/api/tts?text=${encodeURIComponent(text)}`)
+      void fetchImpl(`/api/tts?text=${encodeURIComponent(clean)}`)
         .then((response) => {
           if (!response.ok) throw new Error(`host TTS responded ${response.status}`)
           return response.arrayBuffer()
@@ -276,7 +302,7 @@ export function createReplySpeaker(fetchImpl: FetchLike = globalThis.fetch.bind(
           const fallback = createBrowserSpeaker()
           fallback.onend = finish
           browser = fallback
-          fallback.speak(text)
+          fallback.speak(clean)
         })
     },
     stop() {
