@@ -40,19 +40,21 @@ const STREAM_FLUSH_CHARS = 30
 /**
  * Split streamed reply text into speakable segments: completed sentences plus
  * delimiter-less runs past {@link STREAM_FLUSH_CHARS}. Each segment carries its
- * end offset in `text` so the caller can track how much has been handed to TTS
- * (the trailing incomplete sentence stays un-spoken and is re-evaluated later).
+ * absolute end offset in `text` so the caller can track how much has been
+ * handed to TTS (the trailing incomplete sentence stays un-spoken and is
+ * re-evaluated later). `end` uses the regex `lastIndex`, so runs of
+ * delimiters between sentences do not skew the offsets.
  */
 export function splitStreamSegments(text: string): { segment: string; end: number }[] {
   const result: { segment: string; end: number }[] = []
-  const parts = text.match(/[^。！？!?…\n]+[。！？!?…\n]*/g) ?? []
-  let end = 0
-  for (const part of parts) {
-    end += part.length
+  const pattern = /[^。！？!?…\n]+[。！？!?…\n]*/g
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(text)) !== null) {
+    const part = match[0]
     const trimmed = part.trim()
     if (trimmed.length === 0) continue
     if (SENTENCE_END.test(trimmed) || trimmed.length >= STREAM_FLUSH_CHARS) {
-      result.push({ segment: trimmed, end })
+      result.push({ segment: trimmed, end: pattern.lastIndex })
     }
   }
   return result

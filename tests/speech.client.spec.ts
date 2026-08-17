@@ -36,4 +36,9 @@ describe('stripMarkdownForSpeech', () => {
   it('removes strikethrough', () => {
     expect(stripMarkdownForSpeech('~~删除~~保留')).toBe('删除保留')
   })
+
+  it('strips emoji and decorative symbols (Edge TTS otherwise renders them silently)', () => {
+    expect(stripMarkdownForSpeech('信号满格～📡😄')).toBe('信号满格～')
+    expect(stripMarkdownForSpeech('你好🚀再见')).toBe('你好再见')
+  })
 })

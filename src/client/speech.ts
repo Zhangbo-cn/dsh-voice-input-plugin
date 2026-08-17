@@ -178,6 +178,11 @@ export function stripMarkdownForSpeech(text: string): string {
     .replace(/^\s*[-*+]\s+/gm, '')
     .replace(/^\s*>\s?/gm, '')
     .replace(/&(amp|lt|gt|quot|#39);/g, (m) => ({ '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'" })[m] ?? m)
+    // Emoji and decorative symbols: Edge TTS often renders them as empty or
+    // garbled audio, so a sentence like "信号满格～📡😄" otherwise sounds
+    // skipped. Remove them (and variation selectors / ZWJ joins).
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}\u{20E3}]/gu, '')
+    .replace(/[\u{1F1E6}-\u{1F1FF}]{2}/gu, '')
     .replace(/\s+/g, ' ')
     .trim()
 }
