@@ -40,19 +40,44 @@ export function resolveMicConfig(config: Config = {}): MicButtonInjected {
 
 export const inject = ['slots', 'locale']
 
+/** Guards against a duplicate loader entry applying the plugin twice. */
+let applied = false
+
 /**
- * Register the mic control into the composer tool row.
+ * Register the mic control into the composer tool row. Idempotent: a second
+ * loader row for the same module (e.g. a bundle patch plus an overlay row)
+ * must not re-register the locale or the slot, or the harness fails the entry
+ * with "locale namespace 'voice' already has locale 'zh'".
  * @param ctx - the client context.
  * @param config - optional deployment configuration.
  */
 export function apply(ctx: ClientContext, config: Config = {}): void {
+  if (applied) return
+  applied = true
   const resolved = resolveMicConfig(config)
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-voice-input: dictionaries')
-  ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
-    name: 'conversation.input.left',
-    id: 'voice-input',
-    order: 100,
-    locale: NS,
-    inject: (_sessionId: SessionId): MicButtonInjected => resolved,
-  }, MicButton))
+  ctx.effect(() => {
+    try {
+      return ctx.locale.register(NS, { zh, en })
+    } catch (error) {
+      // The dictionaries are already present (a duplicate load); nothing to add.
+      if (error instanceof Error && error.message.includes('already has locale')) return () => {}
+      throw error
+    }
+  }, 'ui-voice-input: dictionaries')
+  ctx.slots.inject('conversation.input.left', () => {
+    try {
+      return ctx.slots.register({
+        name: 'conversation.input.left',
+        id: 'voice-input',
+        order: 100,
+        locale: NS,
+        inject: (_sessionId: SessionId): MicButtonInjected => resolved,
+      }, MicButton)
+    } catch (error) {
+      // The slot cell is already registered by a duplicate load; the first
+      // registration owns it.
+      if (error instanceof Error && /already|duplicate/i.test(error.message)) return () => {}
+      throw error
+    }
+  })
 }
