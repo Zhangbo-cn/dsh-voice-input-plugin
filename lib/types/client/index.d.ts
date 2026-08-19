@@ -24,7 +24,10 @@ export type MicButtonInjected = Required<Config>;
 export declare function resolveMicConfig(config?: Config): MicButtonInjected;
 export declare const inject: string[];
 /**
- * Register the mic control into the composer tool row.
+ * Register the mic control into the composer tool row. Idempotent: a second
+ * loader row for the same module (e.g. a bundle patch plus an overlay row)
+ * must not re-register the locale or the slot, or the harness fails the entry
+ * with "locale namespace 'voice' already has locale 'zh'".
  * @param ctx - the client context.
  * @param config - optional deployment configuration.
  */

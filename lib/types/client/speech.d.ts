@@ -91,6 +91,13 @@ export declare function createBrowserSpeaker(): TtsSpeakerLike;
 /** A fetch signature the host TTS speaker can be handed in tests. */
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 /**
+ * Strip markdown markup that must not be read aloud: bold/italic/strike spans,
+ * inline and fenced code, links/images (keep the label), headers, list bullets,
+ * blockquote markers, and HTML entities. Whitespace is collapsed to single
+ * spaces so leftover syntax does not produce pauses mid-utterance.
+ */
+export declare function stripMarkdownForSpeech(text: string): string;
+/**
  * Unlock reply audio within a user gesture (the mic pointer-down): create and
  * resume the shared AudioContext so the reply is later playable. No-op when
  * Web Audio is unavailable — playback falls back to an `<audio>` element,

@@ -23,8 +23,10 @@ export declare function extractPartialText(partial: {
 /**
  * Split streamed reply text into speakable segments: completed sentences plus
  * delimiter-less runs past {@link STREAM_FLUSH_CHARS}. Each segment carries its
- * end offset in `text` so the caller can track how much has been handed to TTS
- * (the trailing incomplete sentence stays un-spoken and is re-evaluated later).
+ * absolute end offset in `text` so the caller can track how much has been
+ * handed to TTS (the trailing incomplete sentence stays un-spoken and is
+ * re-evaluated later). `end` uses the regex `lastIndex`, so runs of
+ * delimiters between sentences do not skew the offsets.
  */
 export declare function splitStreamSegments(text: string): {
     segment: string;
